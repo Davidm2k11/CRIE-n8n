@@ -1,0 +1,66 @@
+name: crie-ci
+
+# CRIE CI regression guards — Iteration 1.
+# Runs on pull requests targeting main and on pushes to main only.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  workflow-validation:
+    name: Workflow Static Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The active set is configuration-driven: with no path args the validator
+      # reads ci/active_workflows.txt (single source of truth for what CI checks).
+      - name: Validate workflow JSON (well-formed + static checks)
+        run: python3 ci/validate_workflows.py
+
+  migration-replay:
+    name: Migration Replay (PG16 + pgvector)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # pgvector image because migration 0001 runs CREATE EXTENSION vector,
+        # which the stock postgres:16 image cannot satisfy.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: crie_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGURL: postgres://postgres:postgres@localhost:5432/crie_ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap Supabase roles (0014 prerequisite)
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f ci/replay/bootstrap.sql
+
+      - name: Apply migration chain — pass 1
+        run: |
+          for f in $(ls migrations/*.sql | sort); do
+            echo "applying $f"
+            psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f" >/dev/null
+          done
+
+      - name: Re-apply migration chain — pass 2 (idempotency)
+        run: |
+          for f in $(ls migrations/*.sql | sort); do
+            psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f" >/dev/null
+          done
+
+      - name: Verify post-replay invariants
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f ci/replay/verify.sql
