@@ -102,12 +102,42 @@ input instead of the child's output (manifesting as a false HUMAN_REVIEW).
 - **PR-001 v1.2** adds a mandatory LANGUAGE block: each KU statement stays in its
   source paragraph's language; `authoritySource` is exempt.
 
-## Operational safeguards to enable (deferred builds)
+## Operational safeguards
 
-- **Orphan-document sweep:** a scheduled check that flips any
-  `processing_history` row stuck `PENDING` beyond N minutes with no `COMPLETED`
-  successor to `HUMAN_REVIEW`. Protects against worker crashes (OOM/restart) that
-  skip in-workflow failure paths. Recommended to ship early in operations.
+- **Orphan-document sweep (built, post-v1.0):** a scheduled check that detects any
+  document whose latest `processing_history` row is stuck `PENDING` beyond a
+  configurable threshold with no terminal successor, and remediates it against
+  worker crashes (OOM/restart) that skip WF-001's in-workflow failure paths.
+  Delivered as migration `0029_orphan_sweep.sql` (detector view
+  `monitoring.vw_orphaned_documents` + function
+  `monitoring.sweep_orphaned_documents(stale_minutes, limit)`) and the standalone
+  workflow `SW-016 Orphan Sweep`.
+  - **Remediation is append-only** (the `processing_history` table forbids
+    UPDATE/DELETE, so the row is *not* flipped). Per document it: sets
+    `repository.documents.status='HUMAN_REVIEW'`, **appends a new** terminal
+    `FAILED` `processing_history` row for the stuck stage, and inserts the
+    `monitoring.alerts` row — exactly the pattern WF-001 uses on a handled
+    failure. Idempotent: a remediated document leaves the detector immediately.
+  - **Config-driven** ($vars, no hardcoded values): `CRIE_ORPHAN_SWEEP_CRON`,
+    `CRIE_ORPHAN_SWEEP_STALE_MINUTES` (default 30), `CRIE_ORPHAN_SWEEP_BATCH_LIMIT`
+    (default 100). The workflow carries a passthrough `executeWorkflowTrigger` so
+    it can later be folded into WF-005 as a sub-workflow with no graph change.
+  - **Single scheduler — do NOT run both.** SW-016's own Schedule Trigger is an
+    *interim* cadence for while WF-005 is still a skeleton. The intended production
+    architecture has **exactly one scheduler**: once WF-005 invokes SW-016 (via its
+    `When Called by WF-005` passthrough trigger), **disable SW-016's Schedule
+    Trigger** so WF-005 is the sole cadence. Running both is *safe but wrong* — the
+    DB function is idempotent and guarded, so nothing is remediated twice, but you
+    get redundant executions, duplicated heartbeat noise, and two competing
+    definitions of cadence. Never leave both schedules active.
+  - **`monitoring.sweep_orphaned_documents()` is a supported manual/operator entry
+    point** (by design), not only the workflow's callee. A DBA can run it directly —
+    `SELECT * FROM monitoring.sweep_orphaned_documents();` (defaults 30 min / limit
+    100) or with overrides, e.g. `monitoring.sweep_orphaned_documents(5, 10)`. The
+    function is the unit of work; SW-016 is one caller (scheduler now, WF-005
+    sub-workflow later) and `psql` is a first-class other caller. A manual run is
+    idempotent, guarded against concurrent double-remediation, returns the
+    remediated set, and produces the identical audit trail as the scheduled path.
 - **BI layer:** point Metabase/Power BI/Grafana at the `admin.*` views.
 
 ## Recommended CI guards (deferred)
