@@ -69,14 +69,12 @@ BEGIN
     IF to_regclass('monitoring.vw_orphaned_documents') IS NULL THEN
         RAISE EXCEPTION 'missing monitoring.vw_orphaned_documents (migration 0029)';
     END IF;
-    IF NOT EXISTS (
-        SELECT 1
-          FROM pg_proc p
-          JOIN pg_namespace n ON n.oid = p.pronamespace
-         WHERE n.nspname = 'monitoring'
-           AND p.proname = 'sweep_orphaned_documents'
-           AND pg_get_function_identity_arguments(p.oid) = 'integer, integer'
-    ) THEN
+    -- Resolve by INPUT signature via to_regprocedure (robust): it uses PostgreSQL's
+    -- own function-resolution over the input argument types and is immune to the exact
+    -- text rendering of pg_get_function_identity_arguments (which varies for functions
+    -- carrying OUT/TABLE columns). OUT/TABLE columns are not part of a function's
+    -- identity signature, so only the two integer inputs are named here.
+    IF to_regprocedure('monitoring.sweep_orphaned_documents(integer, integer)') IS NULL THEN
         RAISE EXCEPTION 'missing monitoring.sweep_orphaned_documents(integer, integer) (migration 0029)';
     END IF;
     RAISE NOTICE 'OK: migration 0029 orphan-sweep objects present';
