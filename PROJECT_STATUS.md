@@ -22,6 +22,10 @@ freeze lives in [`CANONICAL_BASELINE.md`](CANONICAL_BASELINE.md).
 - The remaining WF-001 sub-workflows (SW-001/002/003/004/006/009/010/011/012/015)
   are unchanged from their last-good state and are part of the ACTIVE set, but are
   **not shipped as files in this package** — they are carried in the n8n instance.
+
+> The version labels above (e.g. SW-008 v3.5.0, SW-014 v1.1.0) originate from
+> [`docs/WORKFLOW_INVENTORY.md`](docs/WORKFLOW_INVENTORY.md); the workflow JSON
+> files do not embed a version string.
 - **Database:** migrations `0001–0028` (definitive DDL chain).
 - **Prompts:** `PR-001` at **v1.2** (language preservation) is the only prompt
   shipped as SQL in `prompts/`; the rest of the PR-001…PR-008 catalogue is seeded

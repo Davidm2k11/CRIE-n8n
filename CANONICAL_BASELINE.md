@@ -40,6 +40,10 @@ The definitive DDL chain, applied in numeric order against an empty PostgreSQL 1
 | SW-014 Repository Writer | **v1.1.0** | yes |
 | SW-001/002/003/004/006/009/010/011/012/015 | unchanged / last-good | no — carried in the n8n instance |
 
+> Version labels above (e.g. SW-008 v3.5.0, SW-014 v1.1.0) originate from
+> [`docs/WORKFLOW_INVENTORY.md`](docs/WORKFLOW_INVENTORY.md); the workflow JSON
+> files themselves do not embed a version string.
+
 **Not part of the baseline** (roadmap skeletons in `workflows/master/`, excluded
 from the freeze): WF-002 Retrieval, WF-003 Reasoning, WF-004 Output Generation,
 WF-005 Administration.

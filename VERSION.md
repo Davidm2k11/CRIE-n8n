@@ -15,7 +15,9 @@ the DDL sequence lives in [`docs/MIGRATION_CHAIN.md`](docs/MIGRATION_CHAIN.md).
 - **Database:** migrations `0001–0028`.
 - **Prompt:** `PR-001 v1.2` (language preservation).
 - **Workflows:** WF-001 Knowledge Ingestion + the changed sub-workflows
-  (SW-005, SW-007, SW-008 v3.5.0, SW-013, SW-014 v1.1.0).
+  (SW-005, SW-007, SW-008 v3.5.0, SW-013, SW-014 v1.1.0). Version labels are
+  catalogued in [`docs/WORKFLOW_INVENTORY.md`](docs/WORKFLOW_INVENTORY.md), not
+  embedded in the workflow JSON.
 - **Runtime config:** heap `6144`, `QUEUE_WORKER_CONCURRENCY=1`.
 - **Next release** will begin with WF-002 (Retrieval); see
   [`PROJECT_STATUS.md`](PROJECT_STATUS.md).

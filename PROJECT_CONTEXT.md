@@ -28,8 +28,8 @@ CRIE is an **orchestration-over-database** system, not a bespoke application:
   `uuid-ossp` for identifiers. The database is the system of record and enforces
   the platform's invariants through constraints, RLS, and append-only audit
   triggers rather than trusting the orchestration layer to behave.
-- **External services** — Azure Document Intelligence for OCR, and OpenAI
-  (GPT-4o) for metadata extraction, knowledge extraction, and embeddings.
+- **External services** — Azure Document Intelligence for OCR, and an LLM
+  provider for metadata extraction, knowledge extraction, and embeddings.
 
 The database is organised into schemas by concern: `repository` (documents,
 knowledge units, evidence, citations, retrieval chunks, embeddings),
@@ -38,17 +38,16 @@ history), `audit` (append-only audit trail), and `admin` (dashboard/BI views).
 
 ## The end-to-end vision (workflow families)
 
-CRIE is planned as a pipeline of workflow families. Only the first is
-implemented today; the rest exist as skeletons and define the roadmap. See
-[`PROJECT_STATUS.md`](PROJECT_STATUS.md) for what is actually built.
+CRIE is planned as a pipeline of workflow families, listed below. Current build
+progress for each family is tracked in [`PROJECT_STATUS.md`](PROJECT_STATUS.md).
 
-| Family | Purpose | State |
-|---|---|---|
-| **WF-001 Knowledge Ingestion** | OCR → metadata → batched knowledge extraction → embeddings → single-transaction persist | **Implemented (v1.0, frozen)** |
-| **WF-002 Enterprise Retrieval** | Semantic + structured retrieval over the repository | Roadmap skeleton |
-| **WF-003 Enterprise Reasoning** | Compliance reasoning over retrieved knowledge | Roadmap skeleton |
-| **WF-004 Output Generation** | Produce the compliance result / report artifacts | Roadmap skeleton |
-| **WF-005 Administration** | Scheduled operational/administration tasks | Roadmap skeleton |
+| Family | Purpose |
+|---|---|
+| **WF-001 Knowledge Ingestion** | OCR → metadata → batched knowledge extraction → embeddings → single-transaction persist |
+| **WF-002 Enterprise Retrieval** | Semantic + structured retrieval over the repository |
+| **WF-003 Enterprise Reasoning** | Compliance reasoning over retrieved knowledge |
+| **WF-004 Output Generation** | Produce the compliance result / report artifacts |
+| **WF-005 Administration** | Scheduled operational/administration tasks |
 
 ## Frozen invariants
 

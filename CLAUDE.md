@@ -10,6 +10,16 @@ PostgreSQL 16 + pgvector database. This repo is the **frozen v1.0 baseline**
 (migrations, prompts, the ACTIVE workflow set, and docs). See
 [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) for the full picture.
 
+## Repository Precedence
+
+The git repository is the single source of truth. When implementing any feature:
+
+1. **Inspect the repository** (code, migrations, workflow JSON) first.
+2. **Read the project foundation documents** for intent and constraints.
+3. **If implementation and documentation differ, never silently update one to
+   match the other.** Report the inconsistency and get a decision before changing
+   either.
+
 ## Documentation map — where to look
 
 | Concern | Document |
