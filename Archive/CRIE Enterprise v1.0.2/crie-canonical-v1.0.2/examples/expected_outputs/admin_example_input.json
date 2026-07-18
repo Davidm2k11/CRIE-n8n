@@ -1,0 +1,16 @@
+{
+  "_comment": "Example input to WF-005 Administration (scheduled). Sprint 8. The schedule trigger provides no business payload; this illustrates the runtime context assembled at Initialize and the alert-threshold config consumed from admin.config.yaml.",
+  "trigger": { "type": "schedule", "cron": "*/15 * * * *" },
+  "runtime_context": {
+    "correlation_id": "exec_2026_07_07_0915",
+    "workflow_id": "WF-005",
+    "started_at": "2026-07-07T09:15:00+04:00"
+  },
+  "alert_thresholds": {
+    "repository_health_min": 70,
+    "daily_cost_max": 50.0,
+    "high_latency_ms": 8000,
+    "queue_backlog_max": 500,
+    "low_benchmark_score": 0.80
+  }
+}

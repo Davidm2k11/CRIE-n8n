@@ -1,0 +1,16 @@
+{
+  "input": {
+    "requirementId": "REQ-014",
+    "requirement": "The system must support single sign-on via SAML 2.0.",
+    "category": "Security",
+    "complianceLevel": "Fully Compliant",
+    "confidence": 0.94
+  },
+  "output": {
+    "response": "The platform supports single sign-on using the SAML 2.0 standard, as documented in the Security Configuration Guide. Identity provider metadata is imported directly and assertions are validated against the configured certificate.",
+    "assumptions": ["Customer operates a SAML 2.0-compliant identity provider."],
+    "limitations": [],
+    "gapAnalysis": [],
+    "riskRegister": []
+  }
+}

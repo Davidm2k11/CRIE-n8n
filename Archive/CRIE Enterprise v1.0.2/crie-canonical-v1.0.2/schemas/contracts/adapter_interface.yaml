@@ -1,0 +1,43 @@
+# Provider Adapter Layer — interface definition (Module 18, §316-320; Module 37-39).
+# This is the adapter *boundary* that Platform Foundation establishes in Sprint 1.
+# The concrete provider-calling sub-workflows are built in their owning sprints and
+# are intentionally ABSENT now (no placeholder implementations):
+#   OCR       -> SW-005 Azure OCR Adapter        (Sprint 3)
+#   Embedding -> SW-013 Embedding Generator       (Sprint 3)
+#   LLM       -> SW-023 Enterprise LLM            (Sprint 6)
+#   Storage   -> Google Drive / Sheets (SW-025)   (Sprint 3 trigger / Sprint 7 writer)
+#
+# What IS fixed here (and binding on every future adapter):
+
+rules:                                 # §316, adapter rules, §324
+  - Workflows communicate ONLY with adapters; adapters communicate with providers.
+  - Replacing a provider SHALL require configuration changes only, never workflow changes (§360).
+  - Only adapter nodes may access secrets; business nodes never access credentials (§324).
+  - Every adapter returns the provider-independent error contract on failure (Module 37).
+
+adapters:
+  ocr:
+    configKey: ocr                     # configuration/providers.yaml -> ocr.*
+    supported: [azure_document_intelligence]     # future: google_document_ai, aws_textract (§317)
+    timeoutSeconds: 120                # §38
+    retry: { maxRetries: 3, backoff: exponential, base: 1, factor: 2 }   # §39, §214
+    errorContract: crie/contracts/adapter_error
+  llm:
+    configKey: llm                     # -> llm.*
+    supported: [openai, azure_openai, anthropic]  # future: gemini (§318)
+    timeoutSeconds: 45                 # §38
+    retry: { maxRetries: 3, backoff: exponential, base: 1, factor: 2 }
+    errorContract: crie/contracts/adapter_error
+  embedding:
+    configKey: embedding               # -> embedding.*
+    supported: [openai, azure_openai]  # future: voyage, jina, bge (§319)
+    dimensions: 1536                   # fixed for v1 (R-09)
+    timeoutSeconds: 60                 # §38
+    retry: { maxRetries: 3, backoff: exponential, base: 1, factor: 2 }
+    errorContract: crie/contracts/adapter_error
+  storage:
+    configKey: storage                 # -> storage.*
+    supported: [google_drive]          # future: sharepoint, azure_blob, s3 (§320)
+    timeoutSeconds: 30                 # §38 (Google Drive / Sheets)
+    retry: { maxRetries: 3, backoff: exponential, base: 1, factor: 2 }
+    errorContract: crie/contracts/adapter_error

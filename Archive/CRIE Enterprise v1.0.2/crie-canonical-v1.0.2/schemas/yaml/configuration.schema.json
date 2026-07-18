@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crie/config/configuration",
+  "title": "CRIE Configuration (merged)",
+  "description": "Validation schema for the authored configuration YAML set (§627), enforcing §327 checks: required values exist, models configured, providers enabled, feature flags valid. Consumed by the Startup Validation workflow (R-14) and by config validation tests. No hardcoded values are permitted outside this configuration (Principle 7, §621).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["ocr", "llm", "embedding", "storage", "repository", "retrieval", "reasoning", "monitoring", "logging", "security", "featureFlags"],
+  "properties": {
+    "ocr": {
+      "type": "object", "required": ["provider", "model", "endpoint", "timeout", "retryCount"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "model":    { "type": "string", "minLength": 1 },
+        "endpoint": { "type": "string", "minLength": 1 },
+        "timeout":  { "type": "number", "exclusiveMinimum": 0 },
+        "retryCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "llm": {
+      "type": "object", "required": ["provider", "model", "temperature", "maxTokens", "timeout", "retryCount"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "model":    { "type": "string", "minLength": 1 },
+        "temperature": { "type": "number", "minimum": 0 },
+        "maxTokens":   { "type": "integer", "exclusiveMinimum": 0 },
+        "timeout":     { "type": "number", "exclusiveMinimum": 0 },
+        "retryCount":  { "type": "integer", "minimum": 0 }
+      }
+    },
+    "embedding": {
+      "type": "object", "required": ["provider", "model", "dimensions", "batchSize"],
+      "properties": {
+        "provider":   { "type": "string", "minLength": 1 },
+        "model":      { "type": "string", "minLength": 1 },
+        "dimensions": { "type": "integer", "const": 1536, "description": "Fixed at 1536 for v1 (R-09)." },
+        "batchSize":  { "type": "integer", "exclusiveMinimum": 0 }
+      }
+    },
+    "storage": {
+      "type": "object", "required": ["provider"],
+      "properties": { "provider": { "type": "string", "minLength": 1 } }
+    },
+    "repository": {
+      "type": "object", "required": ["certificationRequired", "transactionTimeout"],
+      "properties": {
+        "certificationRequired": { "type": "boolean" },
+        "transactionTimeout":    { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "retrieval": {
+      "type": "object", "required": ["topK", "minimumSimilarity", "rerankerEnabled", "maximumContextTokens"],
+      "properties": {
+        "topK":                 { "type": "integer", "exclusiveMinimum": 0 },
+        "minimumSimilarity":    { "type": "number", "minimum": 0, "maximum": 1 },
+        "rerankerEnabled":      { "type": "boolean" },
+        "maximumContextTokens": { "type": "integer", "exclusiveMinimum": 0 }
+      }
+    },
+    "reasoning": { "type": "object" },
+    "monitoring": {
+      "type": "object", "required": ["telemetryEnabled", "healthCheckInterval"],
+      "properties": {
+        "telemetryEnabled":    { "type": "boolean" },
+        "healthCheckInterval": { "type": "integer", "exclusiveMinimum": 0 }
+      }
+    },
+    "logging": {
+      "type": "object", "required": ["logLevel", "structuredLogging"],
+      "properties": {
+        "logLevel":          { "type": "string", "enum": ["INFO", "WARNING", "ERROR", "CRITICAL"] },
+        "structuredLogging": { "type": "boolean", "const": true }
+      }
+    },
+    "security": { "type": "object" },
+    "featureFlags": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" },
+      "description": "All flags boolean; default false until implemented (§312)."
+    }
+  }
+}

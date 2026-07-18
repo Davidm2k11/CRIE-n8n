@@ -1,0 +1,159 @@
+{
+  "name": "SW-007 LLM Metadata",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "620a711e-c2f2-4692-94e1-eae993e019bc",
+      "name": "When Executed by WF-001",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        112,
+        -160
+      ],
+      "notes": "Accept all data (passthrough). inputSource MUST be lowercase 'passthrough'; n8n silently ignores camelCase 'passThrough' on import and falls back to defined-fields mode, dropping the caller's payload (and any binary)."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT settings FROM configuration.providers WHERE kind='llm') AS settings, system_prompt, user_prompt FROM configuration.prompt_versions WHERE prompt_id='PR-002' ORDER BY version DESC LIMIT 1;",
+        "options": {}
+      },
+      "id": "5f598174-c275-4f2c-85eb-08afff74d5c4",
+      "name": "Load PR-002 + LLM Settings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        336,
+        -160
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "36wScZRTy6L3yvWQ",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Loads prompt body (R-08/§608, never embedded) + llm settings. CRIE Postgres credential."
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== SW-007 build() — METADATA from a BOUNDED FRONT-MATTER WINDOW =====\n// Metadata (title, version, author, effective date) is DOCUMENT-LEVEL and lives in the front\n// matter. Batching it would produce duplicate and CONFLICTING metadata (batch 7 has no title;\n// batch 12 invents one) and burn tokens for nothing. So SW-007 does NOT batch: it sends a\n// bounded window and makes ONE call.\n//\n// This is also a QUALITY improvement, not merely a token saving: sending the whole document and\n// asking for the title invites the model to pick up spurious \"metadata\" from body text.\nconst incoming = $('When Executed by WF-001').first().json;\nconst prow = $('Load PR-002 + LLM Settings').first().json;\nconst s = prow.settings || {};\nconst sys = prow.system_prompt || '';\n\nconst metadataParagraphs = Number(s.metadataParagraphs ?? 80);   // R-08: authored config\nconst metadataScanPages  = Number(s.metadataScanPages ?? 5);\nconst reservedOutput     = Number(s.reservedOutputTokens ?? 4000);\n\nconst ocr = incoming.ocr || {};\nconst paras = ocr.paragraphs || [];\n\n// Window = the first N paragraphs, PLUS every title/sectionHeading within the first M pages\n// (headings carry version/scope information that may sit past the first N paragraphs).\nconst picked = new Map();\nfor (const p of paras.slice(0, metadataParagraphs)) picked.set(p.index, p);\nfor (const p of paras) {\n  if (!p.role) continue;\n  if (p.role !== 'title' && p.role !== 'sectionHeading') continue;\n  // For paginated formats respect the page bound; for DOCX (page===null) take early headings only.\n  const withinScan = (p.page != null) ? (p.page <= metadataScanPages)\n                                      : (p.index <= metadataParagraphs * 4);\n  if (withinScan) picked.set(p.index, p);\n}\nconst window = Array.from(picked.values()).sort((a, b) => a.index - b.index);\n\nconst lines = [];\nlet lastPage = null;\nfor (const p of window) {\n  if (p.page != null && p.page !== lastPage) { lines.push('=== PAGE ' + p.page + ' ==='); lastPage = p.page; }\n  const loc = (p.page != null) ? ('p' + p.page + ':para' + p.index) : ('para' + p.index);\n  const role = p.role ? (' (' + p.role + ')') : '';\n  lines.push('[' + loc + ']' + role + ' ' + p.text);\n}\nconst excerpt = lines.join('\\n');\n\n// PR-002 UNCHANGED — the {{ocr}} placeholder receives the front-matter window.\nconst usr = (prow.user_prompt || '').replace('{{ocr}}', excerpt);\n\nconst stats = {\n  sourceFormat: ocr.sourceFormat || 'unknown',\n  documentParagraphs: paras.length,\n  windowParagraphs: window.length,\n  headingsIncluded: window.filter(p => p.role).length,\n  promptChars: usr.length,\n  approxPromptTokens: Math.round(usr.length / 4),\n};\nconsole.log('[SW-007 front-matter window] ' + JSON.stringify(stats));\n\nreturn [{ json: {\n  _model: s.model,\n  _temp:  s.temperature ?? 0,\n  _max:   reservedOutput,\n  _docStats: stats,\n  messages: [ ...(sys ? [{ role: 'system', content: sys }] : []), { role: 'user', content: usr } ]\n}}];"
+      },
+      "id": "4c74b7b7-d7ab-40ed-b5a4-e0b9f3a0d4ac",
+      "name": "Build LLM Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        -160
+      ],
+      "notes": "Metadata is document-level, so SW-007 does NOT batch. It sends a BOUNDED front-matter window (first metadataParagraphs paragraphs + title/sectionHeading roles within metadataScanPages) in ONE call. Batching metadata would yield duplicate/conflicting values and waste tokens. Window size is authored config (R-08). PR-002 is unchanged. Typically <5k tokens."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json._model, temperature: $json._temp, max_tokens: $json._max, response_format: { type: 'json_object' }, messages: $json.messages }) }}",
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "id": "13003ee4-02cf-4a9d-95da-0439275745c0",
+      "name": "OpenAI Chat Completions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        784,
+        -160
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "5M6iYUo4yxKK9sn5",
+          "name": "OpenAI account"
+        }
+      },
+      "notes": "Credentialed OpenAI call. Swap provider by editing this node only (§360)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Enrichment: preserve incoming item (incl. ocr for SW-008), add { metadata }.\nconst incoming = $('When Executed by WF-001').first().json;\nconst resp = $json;\nconst content = resp.choices && resp.choices[0] && resp.choices[0].message && resp.choices[0].message.content;\nlet parsed; try { parsed = JSON.parse(content); } catch(e){ parsed = { metadata: [] }; }\nconst metadata = Array.isArray(parsed) ? parsed : (parsed.metadata || []);\nreturn [{ json: { ...incoming, metadata } }];"
+      },
+      "id": "d55da5e1-f72b-4a9b-a4dd-d1f5155f7c45",
+      "name": "Shape Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        992,
+        -160
+      ],
+      "notes": "-> { metadata } contract."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by WF-001": {
+      "main": [
+        [
+          {
+            "node": "Load PR-002 + LLM Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load PR-002 + LLM Settings": {
+      "main": [
+        [
+          {
+            "node": "Build LLM Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build LLM Request": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Chat Completions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Completions": {
+      "main": [
+        [
+          {
+            "node": "Shape Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "a0888170-2c85-4a18-8cb4-01e1dbb8aadd",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eab2f6ae955b6f7992c1cc0c248db40d1634d6ef3cafc789bd70dd7320df16a3"
+  },
+  "nodeGroups": [],
+  "id": "cEPltYyB4xJcNblT",
+  "tags": []
+}

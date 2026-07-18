@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crie/contracts/adapter_error",
+  "title": "Adapter Error",
+  "description": "Provider-independent error contract every adapter SHALL return (Module 37). Enables provider substitution without workflow changes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["success", "provider", "operation", "errorCode", "message", "retryable"],
+  "properties": {
+    "success":   { "type": "boolean", "const": false },
+    "provider":  { "type": "string" },
+    "operation": { "type": "string" },
+    "errorCode": { "type": "string" },
+    "message":   { "type": "string" },
+    "retryable": { "type": "boolean" }
+  }
+}

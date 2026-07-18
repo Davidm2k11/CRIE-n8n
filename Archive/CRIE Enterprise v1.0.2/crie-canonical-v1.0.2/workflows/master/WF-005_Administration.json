@@ -1,0 +1,219 @@
+{
+  "name": "WF-005 Administration",
+  "meta": {
+    "crie": {
+      "workflow_id": "WF-005",
+      "title": "Administration",
+      "reconciliation": "R-02 (Administration = WF-005; WF-004 is Output Generation)",
+      "trigger": "schedule (§157)",
+      "sprint": "Sprint 8",
+      "responsibilities": [
+        "Repository Health (§528)",
+        "Workflow Health (§561)",
+        "Configuration Validation (§327, S8-9)",
+        "Prompt Validation (§157, S8-9)",
+        "Repository Analytics (§533/§560)",
+        "Benchmark Execution (§385)",
+        "Health Checks (§142/§568, R-18 circuit breaker)",
+        "Cost Reports (§198/§564)"
+      ],
+      "boundary": "R-17: WF-005 produces/refreshes DASHBOARD DATA only. It renders NO UI. Dashboards are the admin.* views surfaced by the external BI tool.",
+      "license": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra."
+    }
+  },
+  "nodes": [
+    {
+      "id": "trigger_schedule",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [200, 400],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "={{ $vars.CRIE_ADMIN_SCHEDULE_CRON }}" }
+          ]
+        }
+      },
+      "notes": "§157 WF-005 runs on schedule. Cron is config-driven (config/admin.config.yaml -> schedule.cron); NO hardcoded cadence (Principle 7)."
+    },
+    {
+      "id": "init",
+      "name": "Initialize",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [420, 400],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "correlation_id", "value": "={{ $execution.id }}", "type": "string" },
+            { "id": "a2", "name": "workflow_id", "value": "WF-005", "type": "string" },
+            { "id": "a3", "name": "started_at", "value": "={{ $now.toISO() }}", "type": "string" }
+          ]
+        }
+      },
+      "notes": "§159 Standard Workflow Pattern: Trigger -> Initialize -> ... Correlation ID per SW-001."
+    },
+    {
+      "id": "sw027_telemetry_open",
+      "name": "SW-027 Telemetry (open span)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [640, 400],
+      "parameters": {
+        "workflowId": "SW-027",
+        "options": {}
+      },
+      "notes": "§267 SW-027 Telemetry Collector: opens a telemetry span for the admin run."
+    },
+    {
+      "id": "health_scan",
+      "name": "Health Checks (SW-019 fan-out)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [860, 200],
+      "parameters": { "workflowId": "SW-019", "options": {} },
+      "notes": "§142/§568 Health Center. Probes each service (n8n, Supabase, Google Drive, Azure OCR, OpenAI, Claude, Embeddings, Storage, Queue System, Repository), writes monitoring.health_checks. R-18: updates breaker_state (Closed/Open/HalfOpen) from failure_count vs §387 threshold; a HalfOpen recovery probe transitions back to Closed. Provider list & thresholds are config-driven."
+    },
+    {
+      "id": "repo_health",
+      "name": "Repository Health (§528)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [860, 320],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT repository.repository_health();"
+      },
+      "notes": "§528 Repository Health Score 0-100 recomputed; §231 lightweight DB function. Business logic remains in n8n where composite; DB function is thin."
+    },
+    {
+      "id": "repo_analytics",
+      "name": "Repository Analytics (§533/§560)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [860, 440],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT repository.repository_statistics();"
+      },
+      "notes": "§529/§533 statistics + §560 analytics feed admin.vw_repository_dashboard / admin.vw_knowledge_analytics. Views are read-only projections; this node refreshes the underlying source data."
+    },
+    {
+      "id": "cost_report",
+      "name": "Cost Report (§198/§564)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [860, 560],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM admin.vw_cost_intelligence;"
+      },
+      "notes": "§198 cost monitoring / §564 cost intelligence. Reads the cost view to emit the scheduled Cost Report artifact (Export Center §575)."
+    },
+    {
+      "id": "benchmark_exec",
+      "name": "Benchmark Execution (§385)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [860, 680],
+      "parameters": { "workflowId": "UT-006", "options": {} },
+      "notes": "§385 Benchmark Execution. Sprint 8 SCHEDULES benchmark runs and surfaces results in admin.vw_benchmark_dashboard (§565). Full benchmark SUITE definition and numeric target validation is Sprint 9 scope (§196/§390-406) and is NOT implemented here — this node only triggers the existing runner and records results. Targets are configurable (§565)."
+    },
+    {
+      "id": "config_validate",
+      "name": "Config Validation (§327, S8-9)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1080, 300],
+      "parameters": { "workflowId": "UT-000", "options": {} },
+      "notes": "§327 Configuration Validation, run on schedule (S8-9). Reuses the Startup Validation workflow (UT-000, R-14) checks: required values, URLs valid, credentials available, providers enabled, models configured, feature flags valid. Findings -> alerts."
+    },
+    {
+      "id": "prompt_validate",
+      "name": "Prompt Validation (§157, S8-9)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1080, 460],
+      "parameters": { "workflowId": "SW-018", "options": {} },
+      "notes": "§157 Prompt Validation on schedule (S8-9). Verifies PR-001..PR-008 present, versioned (§174), status active, and output-contract-valid via SW-018 Output Validator. Findings -> alerts. No prompt bodies embedded (§608/§612)."
+    },
+    {
+      "id": "evaluate_alerts",
+      "name": "Evaluate Alert Thresholds (§387/§569)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 400],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// §569 Alert Center + §387 Alert Thresholds.\n// Collect upstream results and raise alerts for: Repository Failure,\n// Workflow Failure, Provider Failure, High Cost, High Latency, Queue Backlog,\n// Repository Health Drop, Low Benchmark Score. Thresholds are CONFIG-DRIVEN\n// (config/admin.config.yaml -> alert_thresholds); NO hardcoded thresholds.\nconst cfg = $vars.CRIE_ALERT_THRESHOLDS ? JSON.parse($vars.CRIE_ALERT_THRESHOLDS) : {};\nconst items = $input.all().map(i => i.json);\nconst alerts = [];\nfunction raise(type, severity, source, message, context){\n  alerts.push({ alert_type: type, severity, source, message, context, correlation_id: $('Initialize').first().json.correlation_id });\n}\n// Repository health drop\nconst rh = items.find(x => x.repository_health !== undefined);\nif (rh && cfg.repository_health_min !== undefined && Number(rh.repository_health) < cfg.repository_health_min) {\n  raise('RepositoryHealthDrop', 'Warning', 'repository', 'Repository health below threshold', { observed: rh.repository_health, threshold: cfg.repository_health_min });\n}\n// High cost (daily)\nconst cost = items.find(x => x.daily_cost !== undefined);\nif (cost && cfg.daily_cost_max !== undefined && Number(cost.daily_cost) > cfg.daily_cost_max) {\n  raise('HighCost', 'Warning', 'cost', 'Daily cost above threshold', { observed: cost.daily_cost, threshold: cfg.daily_cost_max });\n}\n// Provider failure / breaker open\nfor (const x of items) {\n  if (x.service && (x.status === 'Critical' || x.status === 'Offline' || x.breaker_state === 'Open')) {\n    raise('ProviderFailure', x.status === 'Offline' ? 'Critical' : 'Warning', x.service, 'Provider unhealthy or breaker open', { status: x.status, breaker_state: x.breaker_state });\n  }\n}\nreturn alerts.map(a => ({ json: a }));"
+      },
+      "notes": "§387/§569. Emits alert rows (severity required). Thresholds configurable; NO hardcoded values (Principle 7)."
+    },
+    {
+      "id": "persist_alerts",
+      "name": "Persist Alerts",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1520, 400],
+      "parameters": {
+        "operation": "insert",
+        "schema": "monitoring",
+        "table": "alerts",
+        "columns": "alert_type, severity, source, message, context, correlation_id"
+      },
+      "notes": "Writes to monitoring.alerts (migration 0026). admin.vw_alert_center surfaces them in the BI tool (§569, R-17)."
+    },
+    {
+      "id": "sw028_notify",
+      "name": "SW-028 Notification",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1740, 400],
+      "parameters": { "workflowId": "SW-028", "options": {} },
+      "notes": "§268 SW-028. Dispatches Email now; Slack/Teams reserved (future). Triggered on Workflow Failure / Human Review / Repository Certification Failure and on Critical alerts. Providers reached through the Provider Adapter layer."
+    },
+    {
+      "id": "sw026_log",
+      "name": "SW-026 Execution Logger",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1960, 400],
+      "parameters": { "workflowId": "SW-026", "options": {} },
+      "notes": "§266 SW-026: writes Workflow Log / AI Log / Performance Log / Audit Log for this admin run. Audit Log lands in immutable audit.* (§230/0023)."
+    },
+    {
+      "id": "sw027_telemetry_close",
+      "name": "SW-027 Telemetry (close span)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [2180, 400],
+      "parameters": { "workflowId": "SW-027", "options": {} },
+      "notes": "§267 SW-027 closes the telemetry span: runtime, tokens, cost, provider, model, retry count, success."
+    }
+  ],
+  "connections": {
+    "Schedule Trigger":            { "main": [[{ "node": "Initialize", "type": "main", "index": 0 }]] },
+    "Initialize":                  { "main": [[{ "node": "SW-027 Telemetry (open span)", "type": "main", "index": 0 }]] },
+    "SW-027 Telemetry (open span)": { "main": [[
+        { "node": "Health Checks (SW-019 fan-out)", "type": "main", "index": 0 },
+        { "node": "Repository Health (§528)", "type": "main", "index": 0 },
+        { "node": "Repository Analytics (§533/§560)", "type": "main", "index": 0 },
+        { "node": "Cost Report (§198/§564)", "type": "main", "index": 0 },
+        { "node": "Benchmark Execution (§385)", "type": "main", "index": 0 }
+    ]] },
+    "Health Checks (SW-019 fan-out)": { "main": [[{ "node": "Config Validation (§327, S8-9)", "type": "main", "index": 0 }]] },
+    "Repository Health (§528)":       { "main": [[{ "node": "Config Validation (§327, S8-9)", "type": "main", "index": 0 }]] },
+    "Config Validation (§327, S8-9)": { "main": [[{ "node": "Prompt Validation (§157, S8-9)", "type": "main", "index": 0 }]] },
+    "Prompt Validation (§157, S8-9)": { "main": [[{ "node": "Evaluate Alert Thresholds (§387/§569)", "type": "main", "index": 0 }]] },
+    "Cost Report (§198/§564)":        { "main": [[{ "node": "Evaluate Alert Thresholds (§387/§569)", "type": "main", "index": 0 }]] },
+    "Benchmark Execution (§385)":     { "main": [[{ "node": "Evaluate Alert Thresholds (§387/§569)", "type": "main", "index": 0 }]] },
+    "Repository Analytics (§533/§560)": { "main": [[{ "node": "Evaluate Alert Thresholds (§387/§569)", "type": "main", "index": 0 }]] },
+    "Evaluate Alert Thresholds (§387/§569)": { "main": [[{ "node": "Persist Alerts", "type": "main", "index": 0 }]] },
+    "Persist Alerts":              { "main": [[{ "node": "SW-028 Notification", "type": "main", "index": 0 }]] },
+    "SW-028 Notification":         { "main": [[{ "node": "SW-026 Execution Logger", "type": "main", "index": 0 }]] },
+    "SW-026 Execution Logger":     { "main": [[{ "node": "SW-027 Telemetry (close span)", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveDataSuccessExecution": "all", "saveExecutionProgress": true },
+  "pinData": {}
+}

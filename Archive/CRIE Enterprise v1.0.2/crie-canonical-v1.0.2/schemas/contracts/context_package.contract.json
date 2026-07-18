@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "crie/contracts/context_package.contract.json",
+  "title": "CRIE Context Package Contract",
+  "description": "The only object accepted by the Enterprise Reasoning Engine (§261). Fields are the union of the three v1.0 Context Package definitions (§76, §187, §294); no field is invented. schemaVersion per §296. This is the WF-002 output contract (§294, §76).",
+  "license": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "contextId",
+    "requirement",
+    "requirementProfile",
+    "knowledgeUnits",
+    "evidence",
+    "citations",
+    "conflicts",
+    "confidence",
+    "statistics",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.1",
+      "description": "§296 contract versioning."
+    },
+    "contextId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "§294/§76/§187 contextId (UUID, §297)."
+    },
+    "requirement": {
+      "type": "string",
+      "description": "Original user requirement text (§294/§76/§187)."
+    },
+    "requirementProfile": {
+      "type": "object",
+      "description": "SW-016 output (§256/§76). Requirement understanding.",
+      "additionalProperties": false,
+      "required": ["keywords", "entities", "modules", "product", "intent", "normalizedQuery", "language", "filters"],
+      "properties": {
+        "normalizedQuery": { "type": "string" },
+        "keywords":  { "type": "array", "items": { "type": "string" } },
+        "entities":  { "type": "array", "items": { "type": "string" } },
+        "modules":   { "type": "array", "items": { "type": "string" } },
+        "product":   { "type": ["string", "null"] },
+        "intent":    { "type": ["string", "null"] },
+        "language":  { "type": "string" },
+        "filters":   { "type": "object" }
+      }
+    },
+    "knowledgeUnits": {
+      "type": "array",
+      "description": "§294/§76/§187 knowledgeUnits.",
+      "items": { "type": "object" }
+    },
+    "evidence": {
+      "type": "array",
+      "description": "§294/§76/§187 evidence, ranked; carries evidenceId for R-06 re-linking downstream.",
+      "items": { "type": "object" }
+    },
+    "citations": {
+      "type": "array",
+      "description": "§294/§76/§187 citations.",
+      "items": { "type": "object" }
+    },
+    "conflicts": {
+      "type": "array",
+      "description": "SW-020 output (§260/§467). Conflicts SHALL be preserved, never hidden.",
+      "items": { "type": "object" }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Retrieval confidence / context quality score 0.00..1.00 (§294 confidence, §187 retrievalConfidence, §470)."
+    },
+    "statistics": {
+      "type": "object",
+      "description": "§294 statistics / §76 retrievalStatistics / §472 retrieval statistics.",
+      "additionalProperties": true,
+      "required": ["strategy", "candidateCount", "afterDedup", "reranked", "conflictCount", "tokenCount", "qualityScore", "stageTimingsMs"],
+      "properties": {
+        "strategy":       { "type": "string" },
+        "candidateCount": { "type": "integer", "minimum": 0 },
+        "afterDedup":     { "type": "integer", "minimum": 0 },
+        "reranked":       { "type": "boolean" },
+        "conflictCount":  { "type": "integer", "minimum": 0 },
+        "tokenCount":     { "type": "integer", "minimum": 0 },
+        "qualityScore":   { "type": "number", "minimum": 0, "maximum": 1 },
+        "emptyRetrieval": { "type": "boolean" },
+        "retries":        { "type": "integer", "minimum": 0 },
+        "stageTimingsMs": { "type": "object" }
+      }
+    },
+    "insufficientEvidence": {
+      "type": "boolean",
+      "description": "True when the §471 empty-retrieval ladder is exhausted. LLM SHALL NOT be called downstream."
+    },
+    "repositoryVersion": {
+      "type": "string",
+      "description": "Repository version in effect at retrieval time (traceability)."
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "§76 createdAt (ISO-8601, §297)."
+    }
+  }
+}

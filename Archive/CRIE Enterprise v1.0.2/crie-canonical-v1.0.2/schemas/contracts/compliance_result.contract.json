@@ -1,0 +1,21 @@
+{
+  "$comment": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra. Canonical Compliance Result contract per CRIE Enterprise Specification v1.1.1 section 295 (R-03). Single superset; no field invented. Producers SW-023/SW-024/WF-003; consumers Output Generation (WF-004, Sprint 7).",
+  "schemaVersion": "1.1",
+  "requirementId": "",
+  "requirement": "",
+  "decision": "",
+  "complianceLevel": "",
+  "confidence": 0,
+  "summary": "",
+  "explanation": "",
+  "supportingEvidence": [],
+  "supportingKnowledgeUnits": [],
+  "citations": [],
+  "assumptions": [],
+  "limitations": [],
+  "risks": [],
+  "recommendations": [],
+  "reviewRequired": false,
+  "repositoryVersion": "",
+  "generatedAt": ""
+}

@@ -1,0 +1,7 @@
+# storage.yaml — Storage configuration (authored source of truth, R-08). §310
+storage:
+  provider: google_drive               # storage adapter (§320)
+  bucket: crie-repository
+  archiveBucket: crie-archive
+  temporaryFolder: crie-tmp
+  retentionPolicy: standard

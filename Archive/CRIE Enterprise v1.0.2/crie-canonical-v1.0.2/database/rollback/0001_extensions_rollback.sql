@@ -1,0 +1,7 @@
+-- Rollback 0001 — extensions are left installed by default (other DBs may use them).
+-- Uncomment to remove in an isolated database:
+-- DROP EXTENSION IF EXISTS unaccent;
+-- DROP EXTENSION IF EXISTS pg_trgm;
+-- DROP EXTENSION IF EXISTS pgcrypto;
+-- DROP EXTENSION IF EXISTS vector;
+-- DROP EXTENSION IF EXISTS "uuid-ossp";

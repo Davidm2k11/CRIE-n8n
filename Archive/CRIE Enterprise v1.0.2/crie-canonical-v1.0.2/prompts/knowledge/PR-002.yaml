@@ -1,0 +1,36 @@
+# CRIE Prompt Registry Entry — PR-002 Metadata Extraction
+# Source of truth: v1.1 §173 (catalog, R-04), §30 (metadata rules).
+# Loaded at runtime by SW-007 via the Prompt Registry (§175). Never embedded
+# in a workflow (§608, §612). Versioned (§174).
+promptId: PR-002
+name: Metadata Extraction
+version: "1.0"
+category: MetadataExtraction
+description: Extract document-level metadata (not business knowledge) from OCR.
+model:
+  profile: metadataModel
+  temperature: 0.0
+  responseFormat: json
+variables:
+  - ocr
+outputContract:
+  type: object
+  properties:
+    metadata:
+      type: array
+      items:
+        key: string
+        value: string
+body: |
+  You extract DOCUMENT METADATA from structured OCR output.
+  Metadata is not business knowledge (v1.1 §30).
+
+  Extract, when present, key/value pairs such as:
+    Product, Module, Version, Language, Department, Customer, Project,
+    Confidentiality, AuthorityLevel, DocumentType, PublicationDate.
+
+  Return ONLY valid JSON of the form:
+  {"metadata":[{"key":"","value":""}]}
+
+  OCR CONTENT:
+  {{ocr}}

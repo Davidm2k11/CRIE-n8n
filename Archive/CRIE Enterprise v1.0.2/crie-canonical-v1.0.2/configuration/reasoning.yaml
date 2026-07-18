@@ -1,0 +1,55 @@
+# All Rights Reserved, Copyright © 2026 Dawod Manasra. Unauthorized copying,
+# modification, distribution, or commercial use is prohibited without written
+# permission.
+#
+# CRIE — Enterprise Reasoning configuration (Sprint 6 / WF-003).
+# Authored YAML is the source of truth (R-08); cached in DB at runtime.
+# Governs SW-022/SW-023/SW-024 behavior. No workflow hardcodes these values.
+
+schemaVersion: "1.1"
+
+reasoning:
+  # PR-004 Compliance Assessment is the WF-003 reasoning prompt (§173, S6-1).
+  assessmentPrompt: PR-004
+  assessmentPromptVersion: "1.0"
+  # PR-005 Output Validation prompt for SW-024 assist (§181, S6-5).
+  validationPrompt: PR-005
+  validationPromptVersion: "1.0"
+  maxRetries: 1            # §264/§494 regenerate-on-invalid attempts
+
+# R-10 / §483 platform confidence engine. Weights are configurable (§484).
+# They are relative; the engine normalizes by their sum.
+confidence:
+  weights:
+    retrievalConfidence: 0.30
+    evidenceQuality: 0.25
+    authority: 0.20
+    citationCoverage: 0.15
+    consistency: 0.10
+  # §91/§484 threshold below which human review is forced.
+  reviewThreshold: 0.65
+
+# §491/§91 human-review triggers configuration.
+humanReview:
+  confidenceThreshold: 0.65
+  minEvidenceThreshold: 1     # §481 floor; deployment may raise
+  # Levels always forcing review are fixed by §491 (Custom Development Required,
+  # Insufficient Evidence) and enforced in code, not overridable here.
+
+# §84 canonical compliance levels (reference; enum enforced in code).
+complianceLevels:
+  - Fully Compliant
+  - Partially Compliant
+  - Configurable
+  - Custom Development Required
+  - Not Supported
+  - Insufficient Evidence
+
+# §480 decision-matrix signal vocabulary (reference; matrix is deterministic).
+decisionMatrixSignals:
+  strong_supporting: Fully Compliant
+  partial: Partially Compliant
+  configuration_available: Configurable
+  requires_customization: Custom Development Required
+  strong_contradictory: Not Supported
+  missing: Insufficient Evidence

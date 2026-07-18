@@ -1,0 +1,231 @@
+{
+  "result": {
+    "status": "CERTIFIED",
+    "documentId": "902e9637-bde5-470a-b10b-efa4a9d83687",
+    "certification": {
+      "certified": true,
+      "status": "CERTIFIED",
+      "checks": {
+        "documentExists": true,
+        "knowledgeExists": true,
+        "evidenceLinked": true,
+        "citationsLinked": true,
+        "chunksGenerated": true,
+        "embeddingsGenerated": true
+      }
+    },
+    "summary": {
+      "workflow": "WF-001",
+      "executionId": "b9967287-d888-43b4-83ca-6b159cf23794",
+      "status": "CERTIFIED",
+      "duration": "4ms",
+      "documentsProcessed": 1,
+      "knowledgeUnits": 2,
+      "evidenceObjects": 2,
+      "chunks": 2,
+      "embeddings": 2,
+      "cost": 0.0123
+    }
+  },
+  "persisted": {
+    "documents": [
+      {
+        "id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "sha256": "6d35099284ac1d917a54a0a44651d592a6491ff591dc8014619b618eea4adc60",
+        "filename": "CUBES_Product_Manual.pdf",
+        "source": "GoogleDrive",
+        "mime_type": "application/pdf",
+        "status": "CERTIFIED",
+        "authority": "Unspecified",
+        "uploaded_at": "2026-07-07T16:56:44.941Z",
+        "correlation_id": "b9967287-d888-43b4-83ca-6b159cf23794"
+      }
+    ],
+    "metadata": [
+      {
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "key": "Product",
+        "value": "CUBES"
+      },
+      {
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "key": "Language",
+        "value": "English"
+      }
+    ],
+    "knowledgeUnits": [
+      {
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "id": "aa1843f6-47f6-4f85-a24b-2d98815df66f",
+        "statement": "The Dashboard supports PDF export.",
+        "category": "Feature",
+        "authoritySource": "Product Manual",
+        "sourcePage": 1,
+        "sourceParagraph": 1
+      },
+      {
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "id": "3c063490-8e7e-4a5f-b4dd-a4ae5463437f",
+        "statement": "The KPI module supports cascading.",
+        "category": "Capability",
+        "authoritySource": "Product Manual",
+        "sourcePage": 1,
+        "sourceParagraph": 2
+      }
+    ],
+    "evidence": [
+      {
+        "id": "0207b430-9105-4e01-a33c-e2119f563b86",
+        "knowledgeUnitId": "aa1843f6-47f6-4f85-a24b-2d98815df66f",
+        "excerpt": "The Dashboard supports PDF export.",
+        "evidenceType": "FeatureDescription",
+        "sourcePage": 1,
+        "sourceParagraph": 1
+      },
+      {
+        "id": "1bfc864f-5d41-42a6-8210-e0e60969f6ad",
+        "knowledgeUnitId": "3c063490-8e7e-4a5f-b4dd-a4ae5463437f",
+        "excerpt": "The KPI module supports cascading.",
+        "evidenceType": "FeatureDescription",
+        "sourcePage": 1,
+        "sourceParagraph": 2
+      }
+    ],
+    "citations": [
+      {
+        "id": "8f759ee8-46d4-4d5a-894e-6d9c33421072",
+        "evidenceId": "0207b430-9105-4e01-a33c-e2119f563b86",
+        "documentId": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "page": 1,
+        "paragraph": 1,
+        "section": null
+      },
+      {
+        "id": "0828aaf7-9369-4978-9148-bdbb851d5025",
+        "evidenceId": "1bfc864f-5d41-42a6-8210-e0e60969f6ad",
+        "documentId": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "page": 1,
+        "paragraph": 2,
+        "section": null
+      }
+    ],
+    "chunks": [
+      {
+        "id": "4f78a4a0-7fde-4ade-8318-5ed3c51771ee",
+        "knowledgeUnitId": "aa1843f6-47f6-4f85-a24b-2d98815df66f",
+        "text": "The Dashboard supports PDF export.",
+        "ordinal": 0
+      },
+      {
+        "id": "1711a127-fe05-4c97-ba2f-1d4dc6107d4f",
+        "knowledgeUnitId": "3c063490-8e7e-4a5f-b4dd-a4ae5463437f",
+        "text": "The KPI module supports cascading.",
+        "ordinal": 0
+      }
+    ],
+    "embeddings": [
+      {
+        "id": "c756f154-a034-41f2-b545-1074830d73cc",
+        "chunkId": "4f78a4a0-7fde-4ade-8318-5ed3c51771ee",
+        "dimensions": 1536,
+        "vector": "[1536 floats]"
+      },
+      {
+        "id": "bd8d8c0f-c035-46cb-b715-317523d5271e",
+        "chunkId": "1711a127-fe05-4c97-ba2f-1d4dc6107d4f",
+        "dimensions": 1536,
+        "vector": "[1536 floats]"
+      }
+    ],
+    "processingHistory": [
+      {
+        "id": "0612d743-8909-458c-965a-7fa0b6ab1edd",
+        "created_at": "2026-07-07T16:56:44.941Z",
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "stage": "Upload",
+        "status": "COMPLETED",
+        "correlation_id": "b9967287-d888-43b4-83ca-6b159cf23794"
+      },
+      {
+        "id": "2f0ea832-afec-4a05-84b7-f74841debe2c",
+        "created_at": "2026-07-07T16:56:44.941Z",
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "stage": "OCR",
+        "status": "PENDING",
+        "correlation_id": "b9967287-d888-43b4-83ca-6b159cf23794"
+      },
+      {
+        "id": "0c13d0fb-9bf6-4e6f-9b3d-a21a7eedce1a",
+        "created_at": "2026-07-07T16:56:44.942Z",
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "stage": "OCR",
+        "status": "COMPLETED",
+        "correlation_id": "b9967287-d888-43b4-83ca-6b159cf23794"
+      },
+      {
+        "id": "e3f6a8b2-37ad-48a1-96a7-c985b6808044",
+        "created_at": "2026-07-07T16:56:44.942Z",
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "stage": "KnowledgeExtraction",
+        "status": "PENDING",
+        "correlation_id": "b9967287-d888-43b4-83ca-6b159cf23794"
+      },
+      {
+        "id": "11610ea1-a1cf-45aa-97f7-5d05a3756c83",
+        "created_at": "2026-07-07T16:56:44.942Z",
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "stage": "KnowledgeExtraction",
+        "status": "COMPLETED",
+        "correlation_id": "b9967287-d888-43b4-83ca-6b159cf23794"
+      },
+      {
+        "id": "1bd38544-bf53-4543-a165-d9cc7e1008c6",
+        "created_at": "2026-07-07T16:56:44.942Z",
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "stage": "ChunkGeneration",
+        "status": "PENDING",
+        "correlation_id": "b9967287-d888-43b4-83ca-6b159cf23794"
+      },
+      {
+        "id": "1a3da0ea-6aba-4e1f-84da-2ba2c8370f65",
+        "created_at": "2026-07-07T16:56:44.942Z",
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "stage": "ChunkGeneration",
+        "status": "COMPLETED",
+        "correlation_id": "b9967287-d888-43b4-83ca-6b159cf23794"
+      },
+      {
+        "id": "5283880d-d59b-42a8-b988-55006547b520",
+        "created_at": "2026-07-07T16:56:44.942Z",
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "stage": "Embeddings",
+        "status": "PENDING",
+        "correlation_id": "b9967287-d888-43b4-83ca-6b159cf23794"
+      },
+      {
+        "id": "df03723e-dd3d-485b-94d1-578a8d3057f8",
+        "created_at": "2026-07-07T16:56:44.944Z",
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "stage": "Embeddings",
+        "status": "COMPLETED",
+        "correlation_id": "b9967287-d888-43b4-83ca-6b159cf23794"
+      },
+      {
+        "id": "b514ec5e-6e51-45e9-95ae-08d8ffa2d78c",
+        "created_at": "2026-07-07T16:56:44.944Z",
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "stage": "Certification",
+        "status": "PENDING",
+        "correlation_id": "b9967287-d888-43b4-83ca-6b159cf23794"
+      },
+      {
+        "id": "f4ca3bb5-9ac2-4689-8f3f-77705e78bb0a",
+        "created_at": "2026-07-07T16:56:44.944Z",
+        "document_id": "902e9637-bde5-470a-b10b-efa4a9d83687",
+        "stage": "Certification",
+        "status": "COMPLETED",
+        "correlation_id": "b9967287-d888-43b4-83ca-6b159cf23794"
+      }
+    ]
+  }
+}

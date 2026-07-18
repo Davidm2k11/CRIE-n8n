@@ -1,0 +1,19 @@
+# Dictionaries seed data — synonyms (§444) and acronyms (§445).
+# Authored source of truth (R-08); loaded into configuration.synonyms /
+# configuration.acronyms by 0017_seed_data.sql. User-adjustable WITHOUT editing
+# SQL or workflows: add/edit entries here and re-run the seed step (§236).
+# Used by requirement normalization (§453) and query expansion (§455),
+# gated by retrieval.expansion.* toggles.
+
+synonyms:
+  - { term: authentication, synonym: authn }
+  - { term: authorization,  synonym: authz }
+  - { term: requirement,    synonym: spec }
+  - { term: compliance,     synonym: conformance }
+
+acronyms:
+  - { acronym: RFP, expansion: Request for Proposal }
+  - { acronym: RFI, expansion: Request for Information }
+  - { acronym: SRS, expansion: Software Requirements Specification }
+  - { acronym: SLA, expansion: Service Level Agreement }
+  - { acronym: RLS, expansion: Row Level Security }

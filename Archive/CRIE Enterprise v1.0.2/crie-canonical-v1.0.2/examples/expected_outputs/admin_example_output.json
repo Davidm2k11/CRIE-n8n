@@ -1,0 +1,34 @@
+{
+  "_comment": "Example WF-005 run output. Illustrates the data WF-005 refreshes/emits (R-17: data, not UI) and one alert raised. Values are illustrative.",
+  "run": { "correlation_id": "exec_2026_07_07_0915", "workflow_id": "WF-005", "success": true, "runtime_ms": 4210 },
+  "health_center": [
+    { "service": "supabase", "status": "Healthy", "latency_ms": 42, "breaker_state": "Closed" },
+    { "service": "openai", "status": "Warning", "latency_ms": 9100, "breaker_state": "Closed" },
+    { "service": "azure_ocr", "status": "Healthy", "latency_ms": 310, "breaker_state": "Closed" }
+  ],
+  "repository_health": 82,
+  "cost_intelligence": { "daily_cost": 12.44, "weekly_cost": 71.90, "monthly_cost": 233.10, "avg_cost_per_requirement": 0.031 },
+  "alerts_raised": [
+    {
+      "alert_type": "HighLatency",
+      "severity": "Warning",
+      "source": "openai",
+      "message": "Provider latency above threshold",
+      "context": { "observed_ms": 9100, "threshold_ms": 8000 },
+      "correlation_id": "exec_2026_07_07_0915"
+    }
+  ],
+  "validation": {
+    "config": { "passed": true, "checks": ["required_values_exist","urls_valid","credentials_available","providers_enabled","models_configured","feature_flags_valid"] },
+    "prompts": { "passed": true, "expected": ["PR-001","PR-002","PR-003","PR-004","PR-005","PR-006","PR-007","PR-008"] }
+  },
+  "notifications_sent": [ { "channel": "email", "event": "Alert", "severity": "Warning" } ],
+  "logs_written": { "workflow_log": true, "ai_log": true, "performance_log": true, "audit_log": true },
+  "dashboards_refreshed": [
+    "admin.vw_main_dashboard","admin.vw_repository_dashboard","admin.vw_knowledge_analytics",
+    "admin.vw_workflow_dashboard","admin.vw_ai_dashboard","admin.vw_cost_intelligence",
+    "admin.vw_benchmark_dashboard","admin.vw_health_center","admin.vw_alert_center",
+    "admin.vw_prompt_registry_dashboard","admin.vw_configuration_dashboard","admin.vw_audit_center",
+    "admin.vw_operational_kpis"
+  ]
+}

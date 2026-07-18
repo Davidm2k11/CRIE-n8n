@@ -1,0 +1,53 @@
+{
+  "run_id": "0994e54e-9313-4b71-8217-2f7900ffa775",
+  "measured": {
+    "knowledge_extraction": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "retrieval": {
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "ndcg": 1.0,
+      "authority_accuracy": 1.0
+    },
+    "citation": {
+      "citation_accuracy": 1.0,
+      "broken_citation_rate": 0.0,
+      "missing_citation_rate": 0.0
+    },
+    "hallucination": {
+      "hallucination_rate": 0.0,
+      "unsupported_claims": 0,
+      "invented_citations": 0
+    },
+    "compliance_accuracy": {
+      "human_agreement": 1.0
+    },
+    "cost": {
+      "ocr_cost": 1.0,
+      "embedding_cost": 0.2,
+      "reasoning_cost": 3.0,
+      "storage_cost": 0.1,
+      "avg_cost_per_requirement": 0.43,
+      "avg_cost_per_document": 0.5375,
+      "monthly_projection": 4.3
+    }
+  },
+  "acceptance_matrix": {
+    "Platform Foundation": "Pass",
+    "Knowledge Ingestion": "Pass",
+    "Repository": "Pass",
+    "Retrieval": "Pass",
+    "Reasoning": "Pass",
+    "Output": "Pass",
+    "Administration": "Pass"
+  },
+  "gate": {
+    "all_benchmark_targets_met": true,
+    "acceptance_matrix_pass": true,
+    "gate_status": "Benchmark gate: PASS (deployment sign-offs pending)"
+  }
+}

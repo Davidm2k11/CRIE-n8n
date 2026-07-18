@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crie/contracts/workflow_error",
+  "title": "Workflow Error",
+  "description": "Structured error every workflow returns (§19). errorType classifies handling: Recoverable→retry, Business→human review, Fatal→stop, Unexpected→log+alert+stop.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "module", "node", "errorType"],
+  "properties": {
+    "status":    { "type": "string", "const": "FAILED" },
+    "module":    { "type": "string" },
+    "node":      { "type": "string" },
+    "errorType": { "type": "string", "enum": ["Recoverable", "Business", "Fatal", "Unexpected"] },
+    "retry":     { "type": "integer", "minimum": 0 }
+  }
+}

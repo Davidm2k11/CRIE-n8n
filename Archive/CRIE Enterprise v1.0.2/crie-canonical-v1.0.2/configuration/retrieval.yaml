@@ -1,0 +1,93 @@
+# =============================================================================
+# CRIE — retrieval.yaml
+# Authored source of truth for retrieval configuration (R-08).
+# Loaded into configuration.* runtime-cache tables by the seed/sync step (§236).
+# Do NOT author values directly in the tables.
+#
+# Spec anchors:
+#   §305  Retrieval Configuration keys
+#   §462  Composite Ranking Formula weights
+#   §454  Metadata Expansion toggle
+#   §455  Synonym Expansion toggle
+#   §469  Token Budget (maximumContextTokens)
+#   R-09  Embedding dimension lock-in (vector(1536)) — informational cross-ref
+#   R-12  §452 canonical ordering; rerank gated by rerankerEnabled (§305)
+#   R-16  9-source authority model (§439); weights configurable
+# License: All Rights Reserved, Copyright © 2026 Dawod Manasra.
+# =============================================================================
+
+schemaVersion: "1.1"
+
+# --- §305 Retrieval Configuration ------------------------------------------
+topK: 50                          # candidates retained after hybrid merge
+minimumSimilarity: 0.30           # cosine floor for semantic candidates (§459)
+metadataFiltering: true           # SW-017 executes before retrieval (§457)
+authorityWeight: 0.25             # authority contribution (mirrors §462 25%)
+rerankerEnabled: false            # R-12/§305 gate; requires crossEncoderModel
+crossEncoderModel: ""             # must be set before enabling rerank (§465)
+maximumContextTokens: 8000        # §469 token budget for Context Package
+
+# --- §456 Retrieval Strategy Selection -------------------------------------
+defaultStrategy: "Hybrid"         # MetadataOnly|KeywordOnly|SemanticOnly|Hybrid
+
+# --- §459 Semantic Retrieval ------------------------------------------------
+distanceMetric: "Cosine"          # Cosine|InnerProduct|L2
+embeddingDimension: 1536          # R-09 v1 lock-in; informational, enforced by SW-013
+
+# --- §458 Keyword Retrieval -------------------------------------------------
+keyword:
+  fullTextSearch: true            # PostgreSQL FTS
+  trigramSearch: true             # pg_trgm
+  ranking: "BM25"                 # configuration-controlled
+
+# --- §462 Composite Ranking Formula (weights SHALL be configurable) ---------
+# NOTE: weights are validated to sum to 1.00 by SW-018/context builder.
+compositeWeights:
+  semanticSimilarity: 0.35
+  authority:          0.25
+  keywordScore:       0.20
+  metadataMatch:      0.10
+  documentFreshness:  0.10
+
+# --- §463 Freshness ---------------------------------------------------------
+# Freshness SHALL NEVER override Authority (§463). This flag only enables the
+# freshness *component* of the composite score; authority precedence is enforced
+# structurally in authority resolution (§440), not via weights.
+freshnessEnabled: true
+freshnessHalfLifeDays: 365
+
+# --- §454 Metadata Expansion / §455 Synonym Expansion toggles --------------
+expansion:
+  metadataExpansion: true         # §454 derive additional filters
+  synonymExpansion: true          # §455 recall improvement
+  acronymNormalization: true      # §453 normalize acronyms before retrieval
+
+# --- §466 Duplicate Detection ----------------------------------------------
+deduplication:
+  semanticSimilarityThreshold: 0.95   # high-similarity duplicate criterion
+
+# --- §469 Token Budget overflow behaviour ----------------------------------
+# If exceeded → lowest-ranked evidence removed first (§469).
+tokenBudget:
+  removalOrder: "lowestRankedFirst"
+
+# --- §471 Empty Retrieval Strategy -----------------------------------------
+# Ordered retry ladder; LLM SHALL NOT be called (§471).
+emptyRetrieval:
+  maxRetries: 3
+  ladder:
+    - "retry"
+    - "relaxMetadataFilters"
+    - "expandSynonyms"
+  onExhaustion: "InsufficientEvidence"
+
+# --- §470 Context Quality components ----------------------------------------
+# Quality score 0.00..1.00; weighting of components used to derive it.
+contextQuality:
+  weights:
+    coverage:             0.30
+    authority:            0.20
+    citationCompleteness: 0.20
+    knowledgeDiversity:   0.15
+    conflictPenalty:      0.10
+    freshness:            0.05

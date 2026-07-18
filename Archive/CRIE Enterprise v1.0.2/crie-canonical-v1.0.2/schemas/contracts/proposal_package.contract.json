@@ -1,0 +1,199 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "crie/contracts/proposal_package.contract.json",
+  "title": "CRIE Proposal Package (WF-004 Output Generation)",
+  "description": "Container assembled by WF-004 from a set of canonical Compliance Results (§295). No reasoning field is invented; deliverables are exactly those named in §552. Copyright (c) 2026 Dawod Manasra — All Rights Reserved.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "proposalId",
+    "generatedAt",
+    "metadata",
+    "complianceMatrix",
+    "executiveSummary",
+    "evidenceReport",
+    "gapAnalysis",
+    "riskRegister",
+    "statistics",
+    "audit"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "string", "const": "1.1" },
+    "proposalId": { "type": "string" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "metadata": {
+      "type": "object",
+      "description": "Optional project metadata (§100).",
+      "additionalProperties": false,
+      "properties": {
+        "customerName": { "type": ["string", "null"] },
+        "tenderName": { "type": ["string", "null"] },
+        "submissionDate": { "type": ["string", "null"] },
+        "reviewer": { "type": ["string", "null"] }
+      }
+    },
+    "complianceMatrix": {
+      "type": "object",
+      "description": "One row per requirement (§102/§547).",
+      "additionalProperties": false,
+      "required": ["columns", "rows"],
+      "properties": {
+        "columns": { "type": "array", "items": { "type": "string" } },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "requirementId", "requirement", "category", "complianceLevel",
+              "response", "supportingEvidence", "citation", "confidence",
+              "reviewRequired", "reviewer", "reviewStatus"
+            ],
+            "properties": {
+              "requirementId": { "type": "string" },
+              "requirement": { "type": "string" },
+              "category": { "type": ["string", "null"] },
+              "complianceLevel": { "type": "string" },
+              "response": { "type": "string" },
+              "supportingEvidence": { "type": "string" },
+              "citation": { "type": "string" },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+              "reviewRequired": { "type": "boolean" },
+              "reviewer": { "type": ["string", "null"] },
+              "reviewStatus": {
+                "type": "string",
+                "enum": ["Pending", "Assigned", "In Review", "Approved", "Rejected", "Needs Clarification", "Archived"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "executiveSummary": {
+      "type": "object",
+      "description": "§109/§548 — generated from validated results only.",
+      "additionalProperties": false,
+      "required": [
+        "overallCompliancePercent", "totalRequirements", "fullyCompliantCount",
+        "partiallyCompliantCount", "customDevelopmentCount", "unsupportedCount",
+        "insufficientEvidenceCount", "keyRisks", "recommendedNextSteps"
+      ],
+      "properties": {
+        "overallCompliancePercent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "totalRequirements": { "type": "integer", "minimum": 0 },
+        "fullyCompliantCount": { "type": "integer", "minimum": 0 },
+        "partiallyCompliantCount": { "type": "integer", "minimum": 0 },
+        "customDevelopmentCount": { "type": "integer", "minimum": 0 },
+        "unsupportedCount": { "type": "integer", "minimum": 0 },
+        "insufficientEvidenceCount": { "type": "integer", "minimum": 0 },
+        "configurableCount": { "type": "integer", "minimum": 0 },
+        "keyRisks": { "type": "array", "items": { "type": "string" } },
+        "recommendedNextSteps": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "evidenceReport": {
+      "type": "object",
+      "description": "§110 — every evidence item used.",
+      "additionalProperties": false,
+      "required": ["columns", "rows"],
+      "properties": {
+        "columns": { "type": "array", "items": { "type": "string" } },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["requirement", "knowledgeUnit", "evidence", "citation", "document", "page", "confidence"],
+            "properties": {
+              "requirement": { "type": "string" },
+              "knowledgeUnit": { "type": ["string", "null"] },
+              "evidence": { "type": "string" },
+              "citation": { "type": "string" },
+              "document": { "type": ["string", "null"] },
+              "page": { "type": ["string", "integer", "null"] },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "gapAnalysis": {
+      "type": "object",
+      "description": "§549 — produced by PR-006/PR-007 (R-04). No new prompt ID.",
+      "additionalProperties": false,
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["requirementId", "gapType", "description"],
+            "properties": {
+              "requirementId": { "type": "string" },
+              "gapType": { "type": "string", "enum": ["Documentation Gap", "Product Gap", "Knowledge Gap"] },
+              "description": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "riskRegister": {
+      "type": "object",
+      "description": "§550 — produced by PR-006/PR-007 (R-04). No new prompt ID.",
+      "additionalProperties": false,
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["risk", "description", "severity", "likelihood", "mitigation", "owner"],
+            "properties": {
+              "risk": { "type": "string" },
+              "description": { "type": "string" },
+              "severity": { "type": "string", "enum": ["Low", "Medium", "High", "Critical"] },
+              "likelihood": { "type": "string", "enum": ["Low", "Medium", "High"] },
+              "mitigation": { "type": "string" },
+              "owner": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
+    "statistics": {
+      "type": "object",
+      "description": "§111 execution statistics.",
+      "additionalProperties": false,
+      "required": ["requirementsProcessed", "averageConfidence"],
+      "properties": {
+        "requirementsProcessed": { "type": "integer", "minimum": 0 },
+        "knowledgeUnitsRetrieved": { "type": "integer", "minimum": 0 },
+        "evidenceObjectsUsed": { "type": "integer", "minimum": 0 },
+        "citationsUsed": { "type": "integer", "minimum": 0 },
+        "averageConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "processingTimeMs": { "type": ["number", "null"] },
+        "llmCost": { "type": ["number", "null"] },
+        "embeddingCost": { "type": ["number", "null"] },
+        "totalCost": { "type": ["number", "null"] }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "description": "§112 audit trail — preserved on every exported package.",
+      "additionalProperties": false,
+      "required": ["executionId", "workflowVersion", "repositoryVersion", "timestamp"],
+      "properties": {
+        "executionId": { "type": "string" },
+        "workflowVersion": { "type": "string" },
+        "promptVersion": { "type": ["string", "null"] },
+        "model": { "type": ["string", "null"] },
+        "repositoryVersion": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "reviewer": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

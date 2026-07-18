@@ -1,0 +1,46 @@
+# providers.yaml — Provider configuration (authored source of truth, R-08)
+# Loaded into configuration.providers runtime-cache table by the seed step (§236, Sprint 2).
+# Secrets are NEVER placed here — only in env vars / n8n credentials (§14, §321-324).
+# Provider switching requires configuration changes only, never workflow changes (§316, §360).
+
+ocr:                                    # §302
+  provider: azure_document_intelligence
+  model: prebuilt-layout
+  endpoint: ${AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}
+  timeout: 120                          # seconds (§38 Azure DI timeout)
+  retryCount: 3                         # §214, §39
+  minimumConfidence: 0.80
+  languageDetection: true
+  tableExtraction: true
+  figureExtraction: true
+
+llm:                                    # §303
+  provider: openai
+  model: gpt-4o
+  temperature: 0.0
+  topP: 1.0
+  maxTokens: 4096
+  frequencyPenalty: 0.0
+  presencePenalty: 0.0
+  timeout: 45                           # seconds (§38 LLM timeout)
+  retryCount: 3                         # §214, §39
+
+embedding:                              # §304
+  provider: openai
+  model: text-embedding-3-small
+  dimensions: 1536                      # v1 default; fixed at vector(1536) (R-09, §226)
+  batchSize: 96
+  maximumBatchTokens: 8191
+  retryCount: 3
+  # Vector index is config-driven (§227): configuration determines implementation.
+  # The seed step applies these to the vector index without editing SQL.
+  vectorIndex:
+    type: hnsw                          # hnsw (default) | ivfflat (§227)
+    metric: cosine                      # cosine | l2 | ip
+    hnsw: { m: 16, efConstruction: 64 }
+    ivfflat: { lists: 100 }
+
+storage:                                # §320 storage adapter provider
+  provider: google_drive
+  timeout: 30                           # seconds (§38 Google Drive timeout)
+  retryCount: 3

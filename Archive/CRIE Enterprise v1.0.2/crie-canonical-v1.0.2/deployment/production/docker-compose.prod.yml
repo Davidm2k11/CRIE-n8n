@@ -1,0 +1,38 @@
+# =============================================================================
+# CRIE production overrides  (Sprint 10, S10-4 · §630 production/)
+# -----------------------------------------------------------------------------
+# Apply on top of the base stack for production:
+#   docker compose \
+#     -f deployment/docker-compose/docker-compose.yml \
+#     -f deployment/production/docker-compose.prod.yml up -d
+#
+# Hardening deltas vs. the reference stack:
+#   * PostgreSQL host port NOT published (DB reachable only inside the network).
+#   * Multiple n8n workers by default (§382 horizontal scaling).
+#   * always-restart policy; tighter healthcheck cadence.
+#   * n8n secure cookie + HTTPS assumed to terminate at the ingress/proxy (§203).
+#
+# Managed Supabase / managed n8n users: ignore the postgres/redis services here
+# and point the n8n env at the managed endpoints instead (no architecture change).
+# =============================================================================
+
+services:
+  postgres:
+    restart: always
+    ports: []          # do not expose the database to the host in production
+
+  redis:
+    restart: always
+
+  n8n-main:
+    restart: always
+    environment:
+      N8N_PROTOCOL: https
+      N8N_SECURE_COOKIE: "true"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "336"   # hours (14 days) execution retention
+
+  n8n-worker:
+    restart: always
+    deploy:
+      replicas: ${N8N_WORKER_REPLICAS:-3}

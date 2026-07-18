@@ -1,0 +1,7 @@
+# logging.yaml — Logging configuration (authored source of truth, R-08). §309
+logging:
+  logLevel: INFO                       # INFO | WARNING | ERROR | CRITICAL (§15)
+  retentionDays: 90
+  structuredLogging: true              # free-text logging prohibited; JSON only (§15)
+  destination: database                # monitoring.workflow_logs (§229, Sprint 2)
+  includeDebug: false

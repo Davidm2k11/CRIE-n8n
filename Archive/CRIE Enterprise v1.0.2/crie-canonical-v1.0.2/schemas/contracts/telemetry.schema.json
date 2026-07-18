@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crie/contracts/telemetry",
+  "title": "Telemetry Record",
+  "description": "Canonical telemetry contract (§16, Principle 8). Every AI request records tokens, model, provider, latency, cost. Persisted to monitoring.ai_requests / execution_statistics (§229, Sprint 2).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["correlationId", "workflowRuntime", "success"],
+  "properties": {
+    "correlationId":     { "type": "string" },
+    "workflowRuntime":   { "type": "number", "minimum": 0, "description": "ms" },
+    "nodeRuntime":       { "type": "number", "minimum": 0, "description": "ms" },
+    "inputTokens":       { "type": "integer", "minimum": 0 },
+    "outputTokens":      { "type": "integer", "minimum": 0 },
+    "tokenUsage":        { "type": "integer", "minimum": 0 },
+    "estimatedCost":     { "type": "number",  "minimum": 0 },
+    "embeddingCount":    { "type": "integer", "minimum": 0 },
+    "retrievalLatency":  { "type": "number",  "minimum": 0 },
+    "reasoningLatency":  { "type": "number",  "minimum": 0 },
+    "provider":          { "type": ["string", "null"] },
+    "model":             { "type": ["string", "null"] },
+    "success":           { "type": "boolean" },
+    "failure":           { "type": "boolean" },
+    "retryCount":        { "type": "integer", "minimum": 0 }
+  }
+}

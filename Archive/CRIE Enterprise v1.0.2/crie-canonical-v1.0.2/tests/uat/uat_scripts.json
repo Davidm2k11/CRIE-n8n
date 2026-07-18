@@ -1,0 +1,87 @@
+{
+  "uat_version": "0.10.0",
+  "spec_ref": "§404",
+  "instructions": "Each representative role executes its predefined scenarios end-to-end and records outcome + feedback. UAT is approved only when every scenario for every role reaches 'Pass' and blocking feedback is resolved (§404, §406 UAT approved).",
+  "roles": [
+    {
+      "role": "Presales Consultant",
+      "scenarios": [
+        {
+          "id": "UAT-PRE-01",
+          "title": "Answer an RFP requirement with cited evidence",
+          "steps": [
+            "Submit an RFP functional requirement to CRIE",
+            "Receive a compliance determination with confidence",
+            "Verify every claim carries a citation to a knowledge unit"
+          ],
+          "expected": "Compliance result returned with citations and confidence; no uncited claims.",
+          "outcome": "Pending",
+          "feedback": ""
+        },
+        {
+          "id": "UAT-PRE-02",
+          "title": "Bulk requirement set to proposal rows",
+          "steps": [
+            "Upload a requirement sheet",
+            "Run the proposal export (WF-004)",
+            "Review the generated rows for completeness"
+          ],
+          "expected": "Deterministic row payload matches the §295 contract; all requirements addressed.",
+          "outcome": "Pending",
+          "feedback": ""
+        }
+      ]
+    },
+    {
+      "role": "Solution Consultant",
+      "scenarios": [
+        {
+          "id": "UAT-SOL-01",
+          "title": "Trace a determination to authority source",
+          "steps": [
+            "Open a compliance determination",
+            "Follow the citation to the originating document/page/section",
+            "Confirm authority source and score"
+          ],
+          "expected": "Citation resolves to correct document/page/section/paragraph (§396).",
+          "outcome": "Pending",
+          "feedback": ""
+        }
+      ]
+    },
+    {
+      "role": "Business Analyst",
+      "scenarios": [
+        {
+          "id": "UAT-BA-01",
+          "title": "Review repository analytics dashboard",
+          "steps": [
+            "Open the Administration repository analytics view",
+            "Confirm knowledge-unit counts and category distribution",
+            "Confirm cost intelligence figures render"
+          ],
+          "expected": "admin.* views render in the BI tool with correct aggregates (R-17).",
+          "outcome": "Pending",
+          "feedback": ""
+        }
+      ]
+    },
+    {
+      "role": "Proposal Manager",
+      "scenarios": [
+        {
+          "id": "UAT-PM-01",
+          "title": "Approve/reject a proposal package",
+          "steps": [
+            "Open a generated proposal package",
+            "Apply review decision using configured thresholds",
+            "Confirm audit entry recorded"
+          ],
+          "expected": "Review decision recorded; immutable audit entry appended (§230/0023).",
+          "outcome": "Pending",
+          "feedback": ""
+        }
+      ]
+    }
+  ]
+}

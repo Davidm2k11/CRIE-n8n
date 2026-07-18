@@ -1,0 +1,113 @@
+{
+  "name": "SW-014 Repository Writer",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "When Executed by WF-001",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "build",
+      "name": "Build Transaction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Assemble the single-transaction SQL from the bundle. §234: all-or-nothing.\n// NOTE: values are embedded for readability; migrate to parameterized query fields\n// before production (documented risk).\nconst b = $('When Executed by WF-001').first().json;\nconst q = (s)=> String(s==null?'':s).replace(/'/g, \"''\");   // minimal escaping\nconst stmts = [];\nstmts.push('BEGIN;');\nstmts.push(`UPDATE repository.documents SET status='PROCESSED' WHERE id='${q(b.documentId)}';`);\nfor (const m of (b.metadata||[])) stmts.push(`INSERT INTO repository.metadata (document_id,key,value) VALUES ('${q(b.documentId)}','${q(m.key)}','${q(m.value)}');`);\nfor (const k of (b.accepted||b.acceptedUnits||[])) stmts.push(`INSERT INTO repository.knowledge_units (id,document_id,content,category,authority,status) VALUES ('${q(k.id)}','${q(b.documentId)}','${q(k.statement)}','${q(k.category)}','${q(k.authoritySource)}','Draft');`);\nfor (const e of (b.evidence||[])) stmts.push(`INSERT INTO repository.evidence (id,knowledge_unit_id,excerpt) VALUES ('${q(e.id)}','${q(e.knowledgeUnitId)}','${q(e.excerpt)}');`);\nfor (const c of (b.citations||[])) stmts.push(`INSERT INTO repository.citations (id,evidence_id,document_id,page,section) VALUES ('${q(c.id)}','${q(c.evidenceId)}','${q(b.documentId)}',${c.page==null?'NULL':Number(c.page)},'${q(c.section)}');`);\nfor (const ch of (b.chunks||[])) stmts.push(`INSERT INTO repository.retrieval_chunks (id,knowledge_unit_id,chunk_order,content) VALUES ('${q(ch.id)}','${q(ch.knowledgeUnitId)}',${Number(ch.ordinal||0)},'${q(ch.text)}');`);\nfor (const em of (b.embeddings||[])) stmts.push(`INSERT INTO repository.embeddings (id,chunk_id,embedding) VALUES ('${q(em.id||'')}','${q(em.chunkId)}','[${(em.vector||[]).join(',')}]');`);\nstmts.push('COMMIT;');\nreturn [{ json: { _txn: stmts.join('\\n'),\n  _counts: { knowledgeUnits:(b.accepted||b.acceptedUnits||[]).length, evidence:(b.evidence||[]).length,\n             citations:(b.citations||[]).length, chunks:(b.chunks||[]).length, embeddings:(b.embeddings||[]).length } } }];"
+      },
+      "notes": "§234 single all-or-nothing transaction SQL."
+    },
+    {
+      "id": "write",
+      "name": "Execute Transaction",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json._txn }}"
+      },
+      "notes": "Runs BEGIN..COMMIT as ONE query (§234). On error the txn rolls back and the node fails -> WF-001 IF routes to Repository/FAILED. CRIE Postgres credential."
+    },
+    {
+      "id": "shape",
+      "name": "Emit Counts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Enrichment: preserve incoming item, add { written, ...counts }.\nconst incoming = $('When Executed by WF-001').first().json;\nreturn [{ json: { ...incoming, written: true, ...$('Build Transaction').first().json._counts } }];"
+      },
+      "notes": "-> { written:true, ...counts }."
+    }
+  ],
+  "connections": {
+    "When Executed by WF-001": {
+      "main": [
+        [
+          {
+            "node": "Build Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Transaction": {
+      "main": [
+        [
+          {
+            "node": "Execute Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Transaction": {
+      "main": [
+        [
+          {
+            "node": "Emit Counts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "workflowVersion": "1.2.0",
+    "sw": "SW-014",
+    "canonicalFn": "sw014_repositoryWriter",
+    "contract": {
+      "input": "bundle {documentId,metadata,accepted,evidence,citations,chunks,embeddings}",
+      "output": "{ written:true, ...counts }"
+    },
+    "note": "Single Postgres transaction (§234). Parameterize before production.",
+    "enrichment": "output = {...incomingItem, newResult}; never discards accumulated state",
+    "jsonbFix": "settings is jsonb (object); removed JSON.parse on settings; LLM-content parse retained"
+  }
+}

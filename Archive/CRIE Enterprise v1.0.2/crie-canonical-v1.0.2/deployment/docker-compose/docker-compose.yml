@@ -1,0 +1,118 @@
+# =============================================================================
+# CRIE reference deployment stack  (Sprint 10, S10-4 · §200/§325/§630)
+# -----------------------------------------------------------------------------
+# Provider-agnostic reference topology. External LLM/embedding/OCR/BI providers
+# are reached through the Provider Adapter layer (never wired here) — this stack
+# only stands up the platform substrate:
+#
+#   * postgres        PostgreSQL 15 + pgvector (Supabase-compatible schema)
+#   * redis           queue backend for n8n Queue Mode (R-18 / §369-§384)
+#   * n8n-main        n8n editor/API in queue mode
+#   * n8n-worker      n8n worker(s) — scale horizontally (§382)
+#
+# This compose file is the DEVELOPMENT / self-hosted reference. Managed Supabase
+# and managed n8n are equally supported (see docs/deployment/Deployment_Guide.md);
+# swapping either is a deployment binding, not an architecture change.
+#
+# Secrets come from a local .env (see .env.example). NEVER commit .env (§682).
+# =============================================================================
+
+x-n8n-env: &n8n-env
+  # --- queue mode (R-18) ---
+  EXECUTIONS_MODE: queue
+  QUEUE_BULL_REDIS_HOST: redis
+  QUEUE_BULL_REDIS_PORT: 6379
+  QUEUE_HEALTH_CHECK_ACTIVE: "true"
+  # --- persistence: n8n's own metadata DB (separate schema from CRIE data) ---
+  DB_TYPE: postgresdb
+  DB_POSTGRESDB_HOST: postgres
+  DB_POSTGRESDB_PORT: 5432
+  DB_POSTGRESDB_DATABASE: ${N8N_DB_NAME:-n8n}
+  DB_POSTGRESDB_USER: ${POSTGRES_USER:-crie}
+  DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+  # --- security (§203) ---
+  N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in .env}
+  N8N_SECURE_COOKIE: "true"
+  N8N_DIAGNOSTICS_ENABLED: "false"
+  GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-UTC}
+  # --- CRIE runtime secrets (consumed by adapter nodes; never hardcoded) ---
+  SUPABASE_URL: ${SUPABASE_URL:-http://postgres:5432}
+  SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  AZURE_ENDPOINT: ${AZURE_ENDPOINT:-}
+  AZURE_KEY: ${AZURE_KEY:-}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crie}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-crie}
+    volumes:
+      - crie_pgdata:/var/lib/postgresql/data
+      # bootstrap the n8n metadata database alongside the crie database
+      - ./supabase/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crie} -d ${POSTGRES_DB:-crie}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - crie_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  n8n-main:
+    image: n8nio/n8n:${N8N_VERSION:-1.68.0}
+    restart: unless-stopped
+    environment:
+      <<: *n8n-env
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - crie_n8ndata:/home/node/.n8n
+      # workflow JSON mounted read-only for import (see scripts/import_workflows.sh)
+      - ../../workflows:/workflows:ro
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+
+  n8n-worker:
+    image: n8nio/n8n:${N8N_VERSION:-1.68.0}
+    restart: unless-stopped
+    command: ["worker"]
+    environment:
+      <<: *n8n-env
+    depends_on:
+      n8n-main:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    volumes:
+      - crie_n8ndata:/home/node/.n8n
+    # Scale workers horizontally (§382): docker compose up --scale n8n-worker=N
+    deploy:
+      replicas: ${N8N_WORKER_REPLICAS:-1}
+
+volumes:
+  crie_pgdata:
+  crie_redisdata:
+  crie_n8ndata:

@@ -1,0 +1,165 @@
+{
+  "name": "WF-002 Enterprise Retrieval",
+  "meta": {
+    "crieWorkflowId": "WF-002",
+    "crieSprint": 5,
+    "crieSpec": "CRIE Enterprise Specification v1.1.1 §452 (canonical, R-12)",
+    "crieContract": "contracts/context_package.contract.json",
+    "license": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra. Unauthorized copying, modification, distribution, or commercial use is prohibited without written permission.",
+    "description": "Canonical §452 retrieval pipeline. Non-bypass (§599/§608): every stage runs in sequence and emits telemetry. Rerank gated by rerankerEnabled (R-12/§305). Emits the Context Package contract (§294/§76) — the only object accepted by WF-003."
+  },
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "node-trigger",
+      "name": "WF-002 Entry (requirement in)",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "workflowId": "SW-016",
+        "options": {}
+      },
+      "id": "node-sw016",
+      "name": "SW-016 Requirement Analyzer (§256/§453-455)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [220, 0],
+      "notes": "Normalization + metadata/synonym/acronym expansion; strategy selection (§456)."
+    },
+    {
+      "parameters": {
+        "workflowId": "SW-017",
+        "options": {}
+      },
+      "id": "node-sw017",
+      "name": "SW-017 Metadata Filter (§257/§457)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [440, 0],
+      "notes": "Filters BEFORE retrieval; Certified-only by default."
+    },
+    {
+      "parameters": {
+        "workflowId": "SW-018",
+        "options": {}
+      },
+      "id": "node-sw018",
+      "name": "SW-018 Hybrid Retriever (§258/§458-460)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [660, 0],
+      "notes": "Keyword + Semantic + Candidate Merge. §471 empty-retrieval ladder handled here."
+    },
+    {
+      "parameters": {
+        "functionCode": "// Authority Ranking (§464/§439/R-16) + composite ranking (§462) + dedup (§466).\n// Delegates to src/retrieval rank stages via the CRIE runtime.\nreturn items;"
+      },
+      "id": "node-rank",
+      "name": "Authority + Composite Rank + Dedup (§462/§464/§466)",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.config.rerankerEnabled }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-rerank-gate",
+      "name": "Rerank Gate (rerankerEnabled — R-12/§305)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1100, 0]
+    },
+    {
+      "parameters": {
+        "workflowId": "SW-019",
+        "options": {}
+      },
+      "id": "node-sw019",
+      "name": "SW-019 Cross-Encoder Reranker (§259/§465)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1320, -120],
+      "notes": "GATED. Requires crossEncoderModel. SHALL NOT retrieve new info (§465)."
+    },
+    {
+      "parameters": {
+        "workflowId": "SW-020",
+        "options": {}
+      },
+      "id": "node-sw020",
+      "name": "SW-020 Conflict Detector (§260/§467)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1540, 0],
+      "notes": "Conflicts preserved, never hidden. Resolution deferred to WF-003."
+    },
+    {
+      "parameters": {
+        "workflowId": "SW-021",
+        "options": {}
+      },
+      "id": "node-sw021",
+      "name": "SW-021 Context Builder (§261/§468-470)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1760, 0],
+      "notes": "Compression (deterministic, no AI summarize) + token budget + quality score."
+    },
+    {
+      "parameters": {
+        "functionCode": "// §74 Context Validation: fail-fast on invalid Context Package (§298).\n// Rejects downstream call if invalid; on empty retrieval emits insufficientEvidence (§471).\nreturn items;"
+      },
+      "id": "node-validate",
+      "name": "Context Validation (§74) + Emit Package (§294)",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1980, 0]
+    }
+  ],
+  "connections": {
+    "WF-002 Entry (requirement in)": {
+      "main": [[{ "node": "SW-016 Requirement Analyzer (§256/§453-455)", "type": "main", "index": 0 }]]
+    },
+    "SW-016 Requirement Analyzer (§256/§453-455)": {
+      "main": [[{ "node": "SW-017 Metadata Filter (§257/§457)", "type": "main", "index": 0 }]]
+    },
+    "SW-017 Metadata Filter (§257/§457)": {
+      "main": [[{ "node": "SW-018 Hybrid Retriever (§258/§458-460)", "type": "main", "index": 0 }]]
+    },
+    "SW-018 Hybrid Retriever (§258/§458-460)": {
+      "main": [[{ "node": "Authority + Composite Rank + Dedup (§462/§464/§466)", "type": "main", "index": 0 }]]
+    },
+    "Authority + Composite Rank + Dedup (§462/§464/§466)": {
+      "main": [[{ "node": "Rerank Gate (rerankerEnabled — R-12/§305)", "type": "main", "index": 0 }]]
+    },
+    "Rerank Gate (rerankerEnabled — R-12/§305)": {
+      "main": [
+        [{ "node": "SW-019 Cross-Encoder Reranker (§259/§465)", "type": "main", "index": 0 }],
+        [{ "node": "SW-020 Conflict Detector (§260/§467)", "type": "main", "index": 0 }]
+      ]
+    },
+    "SW-019 Cross-Encoder Reranker (§259/§465)": {
+      "main": [[{ "node": "SW-020 Conflict Detector (§260/§467)", "type": "main", "index": 0 }]]
+    },
+    "SW-020 Conflict Detector (§260/§467)": {
+      "main": [[{ "node": "SW-021 Context Builder (§261/§468-470)", "type": "main", "index": 0 }]]
+    },
+    "SW-021 Context Builder (§261/§468-470)": {
+      "main": [[{ "node": "Context Validation (§74) + Emit Package (§294)", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {},
+  "active": false,
+  "version": 1
+}

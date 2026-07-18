@@ -1,0 +1,399 @@
+{
+  "name": "PROBE SW-005 — poll iteration evidence",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "When Executed by WF-001",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "inputSource": "passThrough"
+      },
+      "notes": "Input data mode = Accept all data (passThrough). n8n source: when inputSource==PASSTHROUGH the trigger returns inputData unchanged, INCLUDING binary. Required so binary from the parent Execute Workflow node reaches this sub-workflow. typeVersion 1.1 (1 is deprecated)."
+    },
+    {
+      "id": "load-ocr",
+      "name": "Load OCR Provider Settings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        460,
+        180
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT settings FROM configuration.providers WHERE kind='ocr';"
+      },
+      "notes": "Runtime endpoint/model/timeout (R-08). Bind CRIE Postgres credential."
+    },
+    {
+      "id": "reattach-binary",
+      "name": "Re-attach Binary (pattern)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Pattern:\n// If a Postgres node precedes a binary consumer,\n// restore binary from the trigger using node reference.\n//\n// Here: 'Load OCR Provider Settings' (Postgres) sits between the trigger and the Azure\n// node. Postgres replaces the item and drops item.binary, so the Azure node would not see\n// the file. We restore it from the trigger by node reference (verified working: the boundary\n// probe resolved $('When Executed by WF-001').first().binary and getBinaryDataBuffer read the\n// full file). json (the loaded OCR settings) passes through unchanged.\nreturn [{ json: $json, binary: $('When Executed by WF-001').first().binary }];"
+      },
+      "notes": "PATTERN — restore binary after a Postgres node that precedes a binary consumer. Any future SW workflow with Postgres-before-binary-consumer must apply this same re-attach-from-trigger step. See CRIE Workflow Engineering Guidelines."
+    },
+    {
+      "id": "submit",
+      "name": "submit() — POST Analyze",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Load OCR Provider Settings').first().json.settings.endpoint }}/documentintelligence/documentModels/{{ $('Load OCR Provider Settings').first().json.settings.model }}:analyze?api-version=2024-11-30",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "azureApi",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "retry": {
+            "retry": {
+              "maxRetries": 3
+            }
+          }
+        }
+      },
+      "notes": "SUBMIT adapter (Azure). POST :analyze with the binary. fullResponse=true so the Operation-Location header is available. neverError=true so 202 is not treated as an error. Node-level retry handles transient 429/503 only — NOT operation progress."
+    },
+    {
+      "id": "submit-capture",
+      "name": "submit() — capture pollUrl",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// SUBMIT ADAPTER (provider-independent shell; Azure defaults).\n// Extracts the poll URL from the submit response using provider config, and initialises poll state.\nconst cfg  = $('Load OCR Provider Settings').first().json.settings || {};\nconst poll = cfg.poll || {};\nconst HDR  = (poll.pollUrlHeader   || 'operation-location').toLowerCase();\nconst IVAL = Number(poll.pollIntervalMs ?? 2000);   // Azure: no faster than ~2s\nconst MAXA = Number(poll.maxAttempts    ?? 90);     // budget: 90 attempts\nconst MAXMS= Number(poll.maxElapsedMs   ?? 900000); // budget: 15 min hard ceiling\n\nconst res = $json;                       // fullResponse: { statusCode, headers, body }\nconst headers = res.headers || {};\n// header lookup is case-insensitive\nlet pollUrl = null;\nfor (const k of Object.keys(headers)) { if (k.toLowerCase() === HDR) { pollUrl = headers[k]; break; } }\nconst status = res.statusCode;\n\nif (status !== 202 || !pollUrl) {\n  // Submit itself failed -> terminal failure, no polling.\n  return [{ json: {\n    _poll: { terminal: true, status: 'failed', attempt: 0, startedAt: Date.now(),\n             intervalMs: IVAL, maxAttempts: MAXA, maxElapsedMs: MAXMS,\n             error: `submit failed: HTTP ${status}` + (pollUrl ? '' : ' (no poll URL header)') },\n    _result: null\n  }}];\n}\n// Honor Retry-After from the submit response if present.\nlet firstWaitMs = IVAL;\nconst ra = headers['retry-after'] || headers['Retry-After'];\nif (ra && !isNaN(Number(ra))) firstWaitMs = Math.max(IVAL, Number(ra) * 1000);\n\nreturn [{ json: {\n  _poll: { pollUrl, terminal: false, status: 'notStarted', attempt: 0, startedAt: Date.now(),\n           waitMs: firstWaitMs, intervalMs: IVAL, maxAttempts: MAXA, maxElapsedMs: MAXMS, error: null },\n  _result: null\n}}];"
+      },
+      "notes": "Captures the poll URL (Azure: Operation-Location) using provider config (settings.poll.pollUrlHeader), honors Retry-After for the first wait, and seeds the poll budget (maxAttempts / maxElapsedMs). A non-202 or missing header is a terminal submit failure."
+    },
+    {
+      "id": "wait",
+      "name": "poll() — wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1040,
+        300
+      ],
+      "webhookId": "crie-sw005-poll-wait",
+      "parameters": {
+        "amount": "={{ Math.max(1, Math.ceil(($json._poll.waitMs || 2000) / 1000)) }}",
+        "unit": "seconds"
+      },
+      "notes": "Waits the interval computed by the poll adapter (honors Retry-After; default ~2s per Azure guidance)."
+    },
+    {
+      "id": "poll",
+      "name": "poll() — GET operation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json._poll.pollUrl }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "azureApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000,
+          "retry": {
+            "retry": {
+              "maxRetries": 3
+            }
+          }
+        }
+      },
+      "credentials": {},
+      "notes": "GET the operation URL. fullResponse for Retry-After header. Node retry = transient faults only."
+    },
+    {
+      "id": "poll-eval",
+      "name": "poll() — evaluate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// POLL ADAPTER (provider-independent shell; Azure defaults).\n// Normalises the provider response to { status, result } and enforces the timeout budget.\nconst cfg  = $('Load OCR Provider Settings').first().json.settings || {};\nconst pc   = cfg.poll || {};\nconst STATUS_PATH = pc.statusPath      || 'status';\nconst SUCCESS     = pc.terminalSuccess || 'succeeded';\nconst FAILURE     = pc.terminalFailure || 'failed';\nconst RESULT_PATH = pc.resultPath      || 'analyzeResult';\n\n// carry poll state forward (the previous item is the one that entered the Wait)\nconst prev = $('submit() — capture pollUrl').first().json._poll;\nlet state = { ...prev, ...($json._poll || {}) };\n// after the first loop the state rides on the item; recover it if the HTTP node replaced the item\nif (!state.pollUrl) state = { ...prev };\n\nconst res  = $json;                       // fullResponse\nconst body = res.body || {};\nconst headers = res.headers || {};\nconst httpStatus = res.statusCode;\n\nstate.attempt = (Number(state.attempt) || 0) + 1;\nconst elapsed = Date.now() - Number(state.startedAt);\n\n// read provider status via configured path\nconst opStatus = String(STATUS_PATH.split('.').reduce((o,k)=> (o||{})[k], body) ?? '').toLowerCase();\nconst isSuccess = opStatus === String(SUCCESS).toLowerCase();\nconst isFailure = opStatus === String(FAILURE).toLowerCase();\n\n// budget exhaustion -> terminal timeout\nconst overAttempts = state.attempt >= Number(state.maxAttempts);\nconst overElapsed  = elapsed      >= Number(state.maxElapsedMs);\n\nlet result = null, terminal = false, status = opStatus || 'running', error = null;\nif (isSuccess) {\n  terminal = true; status = 'succeeded';\n  result = RESULT_PATH.split('.').reduce((o,k)=> (o||{})[k], body) ?? body;\n} else if (isFailure) {\n  terminal = true; status = 'failed';\n  error = JSON.stringify(body.error || body).slice(0, 500);\n} else if (httpStatus >= 400) {\n  terminal = true; status = 'failed';\n  error = `poll HTTP ${httpStatus}: ` + JSON.stringify(body).slice(0, 300);\n} else if (overAttempts || overElapsed) {\n  terminal = true; status = 'timeout';\n  error = `OCR poll budget exhausted after ${state.attempt} attempts / ${Math.round(elapsed/1000)}s`;\n}\n\n// next wait: honor Retry-After, else configured interval\nlet waitMs = Number(state.intervalMs) || 2000;\nconst ra = headers['retry-after'] || headers['Retry-After'];\nif (ra && !isNaN(Number(ra))) waitMs = Math.max(waitMs, Number(ra) * 1000);\nif (httpStatus === 429) waitMs = Math.max(waitMs * 2, 5000);   // backoff on throttle\nstate.waitMs = waitMs;\nstate.terminal = terminal; state.status = status; state.error = error;\nstate.httpStatus = httpStatus;\nconsole.log('[SW-005 poll] attempt=' + state.attempt + ' http=' + httpStatus\n  + ' status=' + status + ' terminal=' + terminal\n  + ' pages=' + ((result && result.pages) ? result.pages.length : 'n/a'));\n\nreturn [{ json: { _poll: state, _result: result } }];"
+      },
+      "notes": "Normalises the provider poll response to {status,result} via config (statusPath, terminalSuccess/Failure, resultPath). Honors Retry-After, backs off on 429, increments the attempt counter, and enforces maxAttempts/maxElapsedMs so the loop can never run forever."
+    },
+    {
+      "id": "if-terminal",
+      "name": "terminal?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1580,
+        300
+      ],
+      "parameters": {
+        "options": {
+          "caseSensitive": true,
+          "typeValidation": "strict"
+        },
+        "combinator": "and",
+        "conditions": [
+          {
+            "id": "c1",
+            "leftValue": "={{ $json._poll.terminal }}",
+            "rightValue": true,
+            "operator": {
+              "type": "boolean",
+              "operation": "true"
+            }
+          }
+        ]
+      },
+      "notes": "true -> terminal (succeeded/failed/timeout). false -> loop back to Wait and poll again."
+    },
+    {
+      "id": "if-ok",
+      "name": "succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        220
+      ],
+      "parameters": {
+        "options": {
+          "caseSensitive": true,
+          "typeValidation": "strict"
+        },
+        "combinator": "and",
+        "conditions": [
+          {
+            "id": "c1",
+            "leftValue": "={{ $json._poll.status }}",
+            "rightValue": "succeeded",
+            "operator": {
+              "type": "string",
+              "operation": "equals"
+            }
+          }
+        ]
+      },
+      "notes": "succeeded -> shapeResult(). failed/timeout -> ocr=null so WF-001's §154 OCR-fail path fires."
+    },
+    {
+      "id": "shape",
+      "name": "PROBE — poll iteration evidence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        160
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// ===== INSTRUMENTATION ONLY — does not throw. Replaces shapeResult temporarily. =====\n// Reports EVERY poll iteration across EVERY run index, and contrasts the two access methods.\nconst NODE = 'poll() — evaluate';\n\nlet maxRun = 0;\ntry { maxRun = $(NODE).runIndex || 0; } catch (e) {}\n\n// (A) what the BROKEN code saw: .all() with default runIndex (single run)\nlet defaultAll = [];\ntry { defaultAll = ($(NODE).all() || []).map(i => i.json); } catch (e) {}\n\n// (B) what the FIX sees: every run index walked\nconst every = [];\nfor (let r = 0; r <= maxRun; r++) {\n  let items = [];\n  try { items = $(NODE).all(0, r) || []; } catch (e) {}\n  for (const it of items) if (it && it.json) every.push({ runIndex: r, json: it.json });\n}\n\nconst table = every.map((e, i) => {\n  const p = e.json._poll || {};\n  const r = e.json._result;\n  return {\n    runIndex:   e.runIndex,\n    attempt:    p.attempt ?? null,\n    httpStatus: p.httpStatus ?? null,\n    ocrStatus:  p.status ?? null,\n    terminal:   p.terminal ?? null,\n    resultPagesExists: !!(r && r.pages),\n    resultPagesLength: (r && r.pages) ? r.pages.length : null,\n    error:      p.error ?? null,\n  };\n});\n\nconst terms = every.map(e => e.json).filter(j => j._poll && j._poll.terminal === true);\nconst diag = {\n  pollNodeRunIndex: maxRun,\n  iterationsVisibleViaDefaultAll: defaultAll.length,\n  iterationsVisibleWalkingAllRuns: every.length,\n  iterations: table,\n  terminalIterationsFound: terms.length,\n  selected: terms.length ? {\n    status: terms[terms.length-1]._poll.status,\n    pages: (terms[terms.length-1]._result && terms[terms.length-1]._result.pages)\n      ? terms[terms.length-1]._result.pages.length : null\n  } : null,\n};\nconsole.log('[SW-005 PROBE] ' + JSON.stringify(diag, null, 2));\nreturn [{ json: { _probe: diag } }];"
+      },
+      "notes": "Selects the terminal poll iteration by walking EVERY run index of 'poll() — evaluate' ($('X').all() returns only ONE run — runIndex defaults to 0 — which was returning a stale 'running' iteration with _result=null). Throws if no terminal run exists rather than falling back to stale data."
+    },
+    {
+      "id": "fail-out",
+      "name": "shapeResult() — OCR failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        380
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Select the TERMINAL poll iteration.\n// n8n semantics: each pass of the Wait-loop is a separate RUN of 'poll() — evaluate'.\n// $('poll() — evaluate').all() returns items of ONE run only (runIndex defaults to 0) — that is\n// why a stale 'running' iteration (with _result=null) was being picked. We must walk EVERY run.\nfunction allPollRuns() {\n  const out = [];\n  let maxRun = 0;\n  try { maxRun = $('poll() — evaluate').runIndex || 0; } catch (e) { maxRun = 0; }\n  for (let r = 0; r <= maxRun; r++) {\n    let items = [];\n    try { items = $('poll() — evaluate').all(0, r) || []; } catch (e) { items = []; }\n    for (const it of items) if (it && it.json) out.push(it.json);\n  }\n  return out;\n}\nfunction terminalPoll() {\n  const runs = allPollRuns();\n  const term = runs.filter(j => j && j._poll && j._poll.terminal === true);\n  if (term.length) return term[term.length - 1];\n  // Failure path: tolerate absence; report what we saw.\n  return runs.length ? runs[runs.length - 1] : {};\n}\n// Terminal failure/timeout -> ocr=null so WF-001's node-if-ocr routes to the §154 HUMAN_REVIEW path.\nconst incoming = $('When Executed by WF-001').first().json;\nconst final = terminalPoll();\nconst p = final._poll || {};\nreturn [{ json: { ...incoming, ocr: null,\n  ocrError: { status: p.status || 'failed', attempts: p.attempt || 0,\n              message: p.error || 'OCR failed' } } }];"
+      },
+      "notes": "Emits ocr=null + ocrError. Feeds WF-001's existing §154 OCR failure branch unchanged."
+    }
+  ],
+  "connections": {
+    "When Executed by WF-001": {
+      "main": [
+        [
+          {
+            "node": "Load OCR Provider Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load OCR Provider Settings": {
+      "main": [
+        [
+          {
+            "node": "Re-attach Binary (pattern)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-attach Binary (pattern)": {
+      "main": [
+        [
+          {
+            "node": "submit() — POST Analyze",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "submit() — POST Analyze": {
+      "main": [
+        [
+          {
+            "node": "submit() — capture pollUrl",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "submit() — capture pollUrl": {
+      "main": [
+        [
+          {
+            "node": "poll() — wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "poll() — wait": {
+      "main": [
+        [
+          {
+            "node": "poll() — GET operation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "poll() — GET operation": {
+      "main": [
+        [
+          {
+            "node": "poll() — evaluate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "poll() — evaluate": {
+      "main": [
+        [
+          {
+            "node": "terminal?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "terminal?": {
+      "main": [
+        [
+          {
+            "node": "succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "poll() — wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "succeeded?": {
+      "main": [
+        [
+          {
+            "node": "shapeResult() — Shape OCR Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "shapeResult() — OCR failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "workflowVersion": "2.3.0-PROBE",
+    "sw": "SW-005",
+    "canonicalFn": "sw005_azureOcr",
+    "contract": {
+      "input": "binary 'data' + config.ocr",
+      "output": "{ ocr }"
+    },
+    "note": "Provider call via HTTP Request node (portable). Credentials bound at import: azureApi + CRIE Postgres.",
+    "enrichment": "output = {...incomingItem, newResult}; never discards accumulated state",
+    "jsonbFix": "settings is jsonb (object); removed JSON.parse on settings; LLM-content parse retained",
+    "triggerFix": "executeWorkflowTrigger upgraded to 1.1 inputSource=passThrough for binary passthrough",
+    "binaryReattach": "Pattern node added: Postgres-before-binary-consumer -> restore binary from trigger by node reference",
+    "lro": "Azure LRO in-workflow poll loop: submit() -> poll() (Wait+GET+evaluate, Retry-After honored, 429 backoff, attempt/elapsed budget) -> shapeResult(). Output contract unchanged.",
+    "changelog": [
+      "v2.1.0: shapeResult now carries Azure's real paragraph structure into ocr.pages[].paragraphs (with ocr.paragraphSource flag). Additive — existing contract fields unchanged.",
+      "v2.2.0: FIX — shapeResult/fail-out read the TERMINAL poll iteration via $('poll() — evaluate').all() instead of $json. In the Wait-node loop, $json could resolve to a stale iteration whose _result was null, producing ocr.pages=[] and ocr.raw={} downstream. Also throws if analyzeResult has no pages, instead of silently emitting an empty OCR object.",
+      "v2.3.0: ROOT-CAUSE FIX. $('poll() — evaluate').all() returns items of ONE run only (runIndex defaults to 0), so the previous terminalPoll() saw a single stale 'running' iteration with _result=null and fell back to it -> 'analyzeResult carried no pages (status=running)'. Now walks EVERY run index (0..runIndex) per the n8n canonical loop pattern, selects the terminal run, and throws rather than falling back to stale data. poll-eval logs each iteration."
+    ]
+  }
+}

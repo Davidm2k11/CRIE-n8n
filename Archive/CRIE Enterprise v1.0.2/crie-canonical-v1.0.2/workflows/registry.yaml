@@ -1,0 +1,73 @@
+# Workflow Registry (§152, §159, §213, S1-9).
+# Canonical inventory of every workflow ID, its type, owning sprint, and build status.
+# Workflow IDs SHALL never change after publication (§634).
+# This is the authored source of truth; cached into configuration.workflow_registry
+# (§228, R-08) by the seed step in Sprint 2.
+#
+# Sub-workflow catalog is Module 13 SW-001..SW-028 (R-01) — the §158 and §624 lists
+# do NOT govern IDs. Master set is the five WF-001..WF-005 (R-02); there is no WF-006.
+#
+# status: "built"   = implemented in this repository now
+#         "planned"  = owned by a later sprint; intentionally ABSENT until then
+#                      (no placeholder implementation is created)
+
+registryVersion: 1
+
+standardPattern:                 # §159 / §212 — every workflow follows this lifecycle
+  - Trigger
+  - Initialize
+  - Validate Input
+  - Execute
+  - Validate Output
+  - Persist
+  - Log
+  - Return Result
+
+master:                          # §623 — five master workflows (R-02)
+  - { id: WF-001, name: Knowledge_Ingestion,   file: master/WF-001_Knowledge_Ingestion.json,  status: planned, ownedBySprint: 3 }
+  - { id: WF-002, name: Enterprise_Retrieval,  file: master/WF-002_Enterprise_Retrieval.json,  status: planned, ownedBySprint: 5 }
+  - { id: WF-003, name: Enterprise_Reasoning,  file: master/WF-003_Enterprise_Reasoning.json,  status: planned, ownedBySprint: 6 }
+  - { id: WF-004, name: Output_Generation,     file: master/WF-004_Output_Generation.json,     status: planned, ownedBySprint: 7 }
+  - { id: WF-005, name: Administration,         file: master/WF-005_Administration.json,         status: planned, ownedBySprint: 8 }
+
+shared:                          # Module 13 canonical sub-workflow catalog (SW-001..SW-028, R-01)
+  - { id: SW-001, name: Generate_Correlation_ID,  status: planned, ownedBySprint: 3 }
+  - { id: SW-002, name: Generate_SHA256,          status: planned, ownedBySprint: 3 }
+  - { id: SW-003, name: Duplicate_Detection,      status: planned, ownedBySprint: 3 }
+  - { id: SW-004, name: Register_Document,         status: planned, ownedBySprint: 3 }
+  - { id: SW-005, name: Azure_OCR_Adapter,         status: planned, ownedBySprint: 3 }
+  - { id: SW-006, name: OCR_Validation,            status: planned, ownedBySprint: 3 }
+  - { id: SW-007, name: Metadata_Extraction,       status: planned, ownedBySprint: 3 }
+  - { id: SW-008, name: Knowledge_Extraction,      status: planned, ownedBySprint: 3 }
+  - { id: SW-009, name: Evidence_Generator,        status: planned, ownedBySprint: 3 }
+  - { id: SW-010, name: Citation_Generator,        status: planned, ownedBySprint: 3 }
+  - { id: SW-011, name: Knowledge_Validator,       status: planned, ownedBySprint: 3 }
+  - { id: SW-012, name: Semantic_Chunk_Builder,    status: planned, ownedBySprint: 3 }
+  - { id: SW-013, name: Embedding_Generator,       status: planned, ownedBySprint: 3 }
+  - { id: SW-014, name: Repository_Writer,         status: planned, ownedBySprint: 3 }
+  - { id: SW-015, name: Repository_Certification,  status: planned, ownedBySprint: 3 }
+  - { id: SW-016, name: Requirement_Analyzer,      status: planned, ownedBySprint: 5 }
+  - { id: SW-017, name: Metadata_Filter,           status: planned, ownedBySprint: 5 }
+  - { id: SW-018, name: Hybrid_Retriever,          status: planned, ownedBySprint: 5 }
+  - { id: SW-019, name: Cross_Encoder_Reranker,    status: planned, ownedBySprint: 5 }
+  - { id: SW-020, name: Conflict_Detector,         status: planned, ownedBySprint: 5 }
+  - { id: SW-021, name: Context_Builder,           status: planned, ownedBySprint: 5 }
+  - { id: SW-022, name: Prompt_Loader,             status: planned, ownedBySprint: 6 }
+  - { id: SW-023, name: Enterprise_LLM,            status: planned, ownedBySprint: 6 }
+  - { id: SW-024, name: Output_Validator,          status: planned, ownedBySprint: 6 }
+  - { id: SW-025, name: Google_Sheets_Writer,      status: planned, ownedBySprint: 7 }
+  - { id: SW-026, name: Execution_Logger,          status: planned, ownedBySprint: 8 }
+  - { id: SW-027, name: Telemetry_Collector,       status: planned, ownedBySprint: 8 }
+  - { id: SW-028, name: Notification,              status: planned, ownedBySprint: 8 }
+
+utilities:                       # §625 — platform utility workflows
+  # UT-001..UT-006 are the §625-named utilities; UT-007 Startup Validation (R-14)
+  # extends the sequence (n8n-native validation workflow; R-14/§329 name it a
+  # utility workflow without assigning a number). IDs are immutable once published (§634).
+  - { id: UT-001, name: Logging,            file: utilities/UT-001_Logging.json,            status: planned, ownedBySprint: 8 }
+  - { id: UT-002, name: Telemetry,          file: utilities/UT-002_Telemetry.json,          status: planned, ownedBySprint: 8 }
+  - { id: UT-003, name: Health,             file: utilities/UT-003_Health.json,             status: planned, ownedBySprint: 8 }
+  - { id: UT-004, name: Notifications,      file: utilities/UT-004_Notifications.json,      status: planned, ownedBySprint: 8 }
+  - { id: UT-005, name: Benchmark,          file: utilities/UT-005_Benchmark.json,          status: planned, ownedBySprint: 9 }
+  - { id: UT-006, name: Backup,             file: utilities/UT-006_Backup.json,             status: planned, ownedBySprint: 10 }
+  - { id: UT-007, name: Startup_Validation, file: utilities/UT-007_Startup_Validation.json, status: built,   ownedBySprint: 1 }

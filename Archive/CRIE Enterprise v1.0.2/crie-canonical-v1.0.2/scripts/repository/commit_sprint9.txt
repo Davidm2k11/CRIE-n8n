@@ -1,0 +1,51 @@
+COMMIT MESSAGE
+==============
+
+Sprint 9: Benchmarking & UAT validation framework (v0.10.0)
+
+Implement the §194-199 / §390-406 validation framework. Additive only; no
+feature added, no architecture changed, benchmark numeric targets unchanged
+from the frozen spec (v1.1.1).
+
+Migrations (additive, R-15/§239; continue 0024-0026 from Sprint 8):
+- 0027_benchmark_persistence.sql (+rollback): materialize
+  monitoring.benchmark_results and monitoring.latency_history (§130/§3953,
+  §7086, §399 — named in spec, never given columns in v1.0).
+- 0028_benchmark_views.sql (+rollback): admin.* views for benchmark results,
+  latency, §405 acceptance matrix, §406 readiness gate; plus
+  monitoring.module_operational_validation. BI-agnostic contract (R-17).
+
+Harness & datasets:
+- benchmark/harness: real §394-400 metric computations, config loader with
+  startup validation (R-08, §327/§157), evaluator, runner, adapter double.
+- benchmark/datasets/benchmark_dataset.json: §392/§393 labeled ground truth
+  (8 categories x 4 tiers; 10 requirement types).
+- tests/load (§401), tests/failure (§402), tests/security (§403),
+  uat/uat_scripts.json (§404).
+
+Config:
+- config/benchmark.config.yaml (R-08): frozen §196/§197/§394-400 targets
+  transcribed verbatim.
+
+Deliverables:
+- reports/BENCHMARK_REPORT.md: Sprint 9 exit-gate report.
+- Benchmark gate PASS (deployment sign-offs pending). §405 matrix passes.
+- 50/50 acceptance tests passing (tests/run_tests.py, offline).
+
+Design note: Administration (§405) validated operationally (§199/§390) because
+§400 cost is reported, not numerically gated — no target fabricated. §406
+operational sign-offs reported as Pending deployment verification, not passed.
+
+Stops at Sprint 9. Sprint 10 not started; awaiting Architecture Owner approval.
+
+
+VERSION TAG
+===========
+
+v0.10.0
+
+Tag annotation:
+Sprint 9 - Benchmarking & UAT. Validation framework (§194-199, §390-406).
+Additive migrations 0027-0028. Benchmark Report produced; §405 matrix passes;
+§406 benchmark gate PASS (deployment sign-offs pending). 50/50 tests.
+(Commit/tag applied in the canonical repository after integration.)

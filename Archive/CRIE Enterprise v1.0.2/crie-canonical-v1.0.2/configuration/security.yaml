@@ -1,0 +1,10 @@
+# security.yaml — Security configuration (authored source of truth, R-08).
+# Secrets are NEVER stored here (§313); only allowed locations hold secrets (§322).
+security:
+  allowedSecretLocations:              # §322
+    - n8n_credentials
+    - environment_variables
+    - cloud_secret_managers            # future
+  rowLevelSecurity: true               # §235 (enforced in Sprint 2 migrations)
+  auditImmutable: true                 # audit.* append-only/immutable (§344)
+  promptInjectionProtection: true      # §340-342

@@ -1,0 +1,165 @@
+{
+  "name": "WF-003 Enterprise Reasoning",
+  "meta": {
+    "license": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra. Unauthorized copying, modification, distribution, or commercial use is prohibited without written permission.",
+    "crie": {
+      "workflowId": "WF-003",
+      "specVersion": "1.1.1",
+      "sprint": 6,
+      "version": "0.7.0",
+      "trigger": "Context Package (§156)",
+      "output": "Compliance Result (§295 canonical, R-03)",
+      "reconciliations": ["R-03", "R-06", "R-10", "R-11"],
+      "subWorkflows": ["SW-022", "SW-023", "SW-024"],
+      "note": "Sequence per §156. No shortcuts; full sequence executes (non-bypass §599/§608). No Sprint 7 (WF-004 Output Generation) logic present."
+    }
+  },
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "wf003-trigger",
+      "name": "Receive Context Package",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "notes": "§156 Trigger: Context Package (§294) from WF-002 / Sprint 5."
+    },
+    {
+      "parameters": {
+        "functionCode": "// §156 Validate Context / §298 fail-fast input contract.\n// Delegates to src/reasoning/wf003.py::_validate_context in the reference impl.\nfor (const item of items) {\n  const cp = item.json;\n  for (const f of ['contextId','requirement','knowledgeUnits','evidence','citations']) {\n    if (!(f in cp)) { throw new Error('Context Package missing field: ' + f); }\n  }\n}\nreturn items;"
+      },
+      "id": "wf003-validate-context",
+      "name": "Validate Context",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "workflowId": "SW-022",
+        "options": {}
+      },
+      "id": "wf003-load-prompt",
+      "name": "SW-022 Load Prompt (PR-004)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [640, 300],
+      "notes": "§262/§175/§176. Loads PR-004 v1.0 from Prompt Registry and injects variables. Prompts SHALL NOT be embedded in the workflow (§86)."
+    },
+    {
+      "parameters": {
+        "workflowId": "SW-023",
+        "options": {}
+      },
+      "id": "wf003-enterprise-llm",
+      "name": "SW-023 Enterprise LLM",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [860, 300],
+      "notes": "§263/R-11. Produces explanation + evidenceMapping ONLY via the Provider Adapter layer. Does NOT decide complianceLevel or confidence."
+    },
+    {
+      "parameters": {
+        "functionCode": "// R-11: derive complianceLevel deterministically (§480/§481).\n// R-10: compute authoritative confidence on the platform (§483/§89).\n// Reference implementation: src/reasoning/compliance_level.py + confidence.py.\n// This node calls the platform reasoning service; no LLM value is authoritative.\nreturn items;"
+      },
+      "id": "wf003-derive-level-confidence",
+      "name": "Derive Level + Confidence",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1080, 300],
+      "notes": "R-10 / R-11. modelSelfConfidence and suggestedLevel are advisory input only."
+    },
+    {
+      "parameters": {
+        "functionCode": "// R-06: attach citations re-linked via evidenceId (§88/§291).\n// Reference implementation: src/reasoning/enterprise_llm.py::relink_citations.\nreturn items;"
+      },
+      "id": "wf003-attach-citations",
+      "name": "Attach Citations (R-06)",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "workflowId": "SW-024",
+        "options": {}
+      },
+      "id": "wf003-validate-output",
+      "name": "SW-024 Output Validator",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1520, 300],
+      "notes": "§264/§90/§298/§493/§494. JSON valid, required fields, citations, confidence, compliance level; hallucination detection; self-validation. Invalid -> retry (§264)."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json[\"selfValidation\"][\"valid\"]}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf003-validation-gate",
+      "name": "Self-Validation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1740, 300],
+      "notes": "§494: invalid output SHALL be regenerated (loops back to SW-023 up to maxRetries)."
+    },
+    {
+      "parameters": {},
+      "id": "wf003-return",
+      "name": "Return Compliance Result",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1960, 220],
+      "notes": "§156/§295. Emits the single canonical Compliance Result contract (R-03)."
+    },
+    {
+      "parameters": {},
+      "id": "wf003-regenerate",
+      "name": "Regenerate (retry)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1740, 460],
+      "notes": "Loops back to SW-023 while attempts remain (§264/§494)."
+    }
+  ],
+  "connections": {
+    "Receive Context Package": {
+      "main": [[{ "node": "Validate Context", "type": "main", "index": 0 }]]
+    },
+    "Validate Context": {
+      "main": [[{ "node": "SW-022 Load Prompt (PR-004)", "type": "main", "index": 0 }]]
+    },
+    "SW-022 Load Prompt (PR-004)": {
+      "main": [[{ "node": "SW-023 Enterprise LLM", "type": "main", "index": 0 }]]
+    },
+    "SW-023 Enterprise LLM": {
+      "main": [[{ "node": "Derive Level + Confidence", "type": "main", "index": 0 }]]
+    },
+    "Derive Level + Confidence": {
+      "main": [[{ "node": "Attach Citations (R-06)", "type": "main", "index": 0 }]]
+    },
+    "Attach Citations (R-06)": {
+      "main": [[{ "node": "SW-024 Output Validator", "type": "main", "index": 0 }]]
+    },
+    "SW-024 Output Validator": {
+      "main": [[{ "node": "Self-Validation Gate", "type": "main", "index": 0 }]]
+    },
+    "Self-Validation Gate": {
+      "main": [
+        [{ "node": "Return Compliance Result", "type": "main", "index": 0 }],
+        [{ "node": "Regenerate (retry)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Regenerate (retry)": {
+      "main": [[{ "node": "SW-023 Enterprise LLM", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {},
+  "active": false
+}

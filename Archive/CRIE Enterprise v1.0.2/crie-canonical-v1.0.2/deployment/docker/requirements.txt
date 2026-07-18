@@ -1,0 +1,7 @@
+# CRIE tooling image Python dependencies (Sprint 10, S10-4).
+# Minimal and pinned for reproducible builds (§616 "deployment reproducible").
+# The harness/validation code is dependency-light by design; PyYAML is the only
+# hard runtime requirement. psycopg2 is included for optional Python-side DB
+# checks (migrations themselves run via psql).
+PyYAML==6.0.2
+psycopg2-binary==2.9.9

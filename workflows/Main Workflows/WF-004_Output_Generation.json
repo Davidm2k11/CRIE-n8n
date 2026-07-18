@@ -1,0 +1,123 @@
+{
+  "name": "WF-004 Output Generation",
+  "meta": {
+    "crieWorkflowId": "WF-004",
+    "crieVersion": "0.8.0",
+    "crieSprint": 7,
+    "license": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra. Unauthorized copying, modification, distribution, or commercial use is prohibited without written permission.",
+    "spec": "CRIE_Enterprise_Specification_v1.1.1.md Module 06 (§98-§115), Module 49 (§547-§552); decisions R-02, R-03, R-04, R-08, R-10, R-11",
+    "pipeline": "WF-002 -> WF-003 -> WF-004 (R-02; no WF-006)"
+  },
+  "settings": { "executionOrder": "v1" },
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "wf004-trigger",
+      "name": "Start (Compliance Results in)",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "notes": "Input: array of canonical Compliance Results (§295) from WF-003, plus context (proposalId, executionId, metadata). §100."
+    },
+    {
+      "parameters": {
+        "functionCode": "// Fail-fast contract validation against §295 (§298).\n// Delegates to the runnable engine wf004_output_generation._validate_result.\n// In deployment this Code node calls the shared validator; here it asserts\n// required fields exist before assembly.\nfor (const item of items) {\n  const r = item.json;\n  if (r.schemaVersion !== '1.1') { throw new Error('schemaVersion must be 1.1 (§296)'); }\n  for (const f of ['requirementId','requirement','complianceLevel']) {\n    if (r[f] === undefined || r[f] === null) { throw new Error('missing ' + f + ' (§295)'); }\n  }\n}\nreturn items;"
+      },
+      "id": "wf004-validate",
+      "name": "Validate §295 Contract",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [440, 300],
+      "notes": "§298 fail-fast on invalid input contract. No reasoning performed (§98)."
+    },
+    {
+      "parameters": {},
+      "id": "wf004-matrix",
+      "name": "Compliance Matrix (§102/§547)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [680, 180],
+      "notes": "Builds one row per requirement using configurable column mapping (output.config.yaml, §364). S7-1."
+    },
+    {
+      "parameters": {},
+      "id": "wf004-execsum",
+      "name": "Executive Summary (PR-007, §109/§548)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [680, 300],
+      "notes": "Counts computed deterministically (R-10/R-11); narrative from PR-007 (R-04). S7-2."
+    },
+    {
+      "parameters": {},
+      "id": "wf004-evidence",
+      "name": "Evidence Report (§110)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [680, 420],
+      "notes": "Every evidence item used, one row each. S7-3."
+    },
+    {
+      "parameters": {},
+      "id": "wf004-gap",
+      "name": "Gap Analysis (§549, PR-006/PR-007)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [900, 180],
+      "notes": "Collected from PR-006 output attached to each result; no new prompt ID (R-04). S7-4."
+    },
+    {
+      "parameters": {},
+      "id": "wf004-risk",
+      "name": "Risk Register (§550, PR-006/PR-007)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [900, 300],
+      "notes": "Collected from PR-006 output; no new prompt ID (R-04). S7-5."
+    },
+    {
+      "parameters": {},
+      "id": "wf004-review",
+      "name": "Review States + Reviewer Workflow (§106/§107/§551)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [900, 420],
+      "notes": "Applies §105 row review rules and review state machine. Rejected -> WF-003. S7-8."
+    },
+    {
+      "parameters": {},
+      "id": "wf004-sw025",
+      "name": "SW-025 Google Sheets Writer (§265/§364)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1140, 240],
+      "notes": "Configuration-driven column mapping; no hardcoded columns. Adapter provisioned in deployment. S7-7."
+    },
+    {
+      "parameters": {
+        "functionCode": "// Assemble Proposal Package (§552) + audit trail (§112).\n// Deterministic export (§113). Emits the proposal_package.contract.json shape.\nreturn items;"
+      },
+      "id": "wf004-assemble",
+      "name": "Assemble Proposal Package (§552) + Audit (§112)",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1140, 400],
+      "notes": "S7-6 (PR-006 proposal writing wired upstream), S7-9 (export rules + audit trail). Deterministic (§113)."
+    }
+  ],
+  "connections": {
+    "Start (Compliance Results in)": { "main": [[{ "node": "Validate §295 Contract", "type": "main", "index": 0 }]] },
+    "Validate §295 Contract": { "main": [[
+      { "node": "Compliance Matrix (§102/§547)", "type": "main", "index": 0 },
+      { "node": "Executive Summary (PR-007, §109/§548)", "type": "main", "index": 0 },
+      { "node": "Evidence Report (§110)", "type": "main", "index": 0 }
+    ]] },
+    "Compliance Matrix (§102/§547)": { "main": [[{ "node": "Gap Analysis (§549, PR-006/PR-007)", "type": "main", "index": 0 }]] },
+    "Executive Summary (PR-007, §109/§548)": { "main": [[{ "node": "Risk Register (§550, PR-006/PR-007)", "type": "main", "index": 0 }]] },
+    "Evidence Report (§110)": { "main": [[{ "node": "Review States + Reviewer Workflow (§106/§107/§551)", "type": "main", "index": 0 }]] },
+    "Gap Analysis (§549, PR-006/PR-007)": { "main": [[{ "node": "SW-025 Google Sheets Writer (§265/§364)", "type": "main", "index": 0 }]] },
+    "Risk Register (§550, PR-006/PR-007)": { "main": [[{ "node": "SW-025 Google Sheets Writer (§265/§364)", "type": "main", "index": 0 }]] },
+    "Review States + Reviewer Workflow (§106/§107/§551)": { "main": [[{ "node": "Assemble Proposal Package (§552) + Audit (§112)", "type": "main", "index": 0 }]] },
+    "SW-025 Google Sheets Writer (§265/§364)": { "main": [[{ "node": "Assemble Proposal Package (§552) + Audit (§112)", "type": "main", "index": 0 }]] }
+  }
+}

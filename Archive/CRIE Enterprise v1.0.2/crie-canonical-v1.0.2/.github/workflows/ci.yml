@@ -1,0 +1,148 @@
+# =============================================================================
+# CRIE CI/CD pipeline  (Sprint 10, S10-4 · §200)
+# -----------------------------------------------------------------------------
+# Mirrors the §200 recommended pipeline. Each stage is a gate: the pipeline
+# STOPS if any stage fails ("Deployment shall stop if any stage fails", §200).
+#
+#   Commit -> Static Validation -> Workflow Validation -> SQL Migration
+#   Validation -> Unit Tests -> Integration Tests -> Benchmark Suite ->
+#   Deploy Development -> Smoke Tests -> Deploy Production
+#
+# Deploy stages are gated on the default branch and left as explicit, protected
+# steps (they require environment secrets + approvals that live in the target
+# deployment, per PROJECT_STATUS "deployment-side sign-offs"). The build/test
+# stages run on every push and PR.
+# =============================================================================
+name: crie-ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  static-validation:
+    name: Static Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install tooling deps
+        run: pip install -r deployment/docker/requirements.txt
+      - name: Repository structure (§636/§637)
+        run: bash tests/integration/test_bootstrap.sh
+      - name: Configuration valid (R-14 / §327)
+        run: python3 scripts/setup/validate_configuration.py
+      - name: All config YAML + contracts parse
+        run: |
+          python3 - <<'PY'
+          import glob, json, yaml, sys
+          for f in glob.glob("configuration/*.yaml"): yaml.safe_load(open(f))
+          for f in glob.glob("schemas/contracts/*.json") + glob.glob("schemas/yaml/*.json"):
+              json.load(open(f))
+          print("static validation OK")
+          PY
+
+  workflow-validation:
+    name: Workflow Validation
+    needs: static-validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Workflow + sub-workflow JSON well-formed (§623/§634)
+        run: |
+          python3 - <<'PY'
+          import glob, json
+          for f in glob.glob("workflows/**/*.json", recursive=True):
+              json.load(open(f))
+          print("workflow JSON OK")
+          PY
+
+  migration-validation:
+    name: SQL Migration Validation
+    needs: workflow-validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Migration/rollback parity + ordering (§217/§239)
+        run: python3 tests/integration/test_database.py
+
+  unit-tests:
+    name: Unit Tests
+    needs: migration-validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install deps
+        run: pip install -r deployment/docker/requirements.txt
+      - name: Sprint 9 metric/unit suite
+        run: python3 tests/run_tests.py
+
+  integration-tests:
+    name: Integration Tests
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: Install deps
+        run: pip install -r deployment/docker/requirements.txt
+      - name: Full acceptance gate (9 suites)
+        run: python3 tests/run_all.py
+
+  benchmark-suite:
+    name: Benchmark Suite
+    needs: integration-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install deps
+        run: pip install -r deployment/docker/requirements.txt
+      - name: Benchmark harness (§390-§406)
+        run: python3 scripts/benchmark/run_benchmark.py
+
+  deploy-development:
+    name: Deploy Development
+    needs: benchmark-suite
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: development
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply migrations + seed config + smoke (development)
+        env:
+          DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+          N8N_HEALTH_URL: ${{ secrets.DEV_N8N_HEALTH_URL }}
+        run: |
+          bash deployment/scripts/apply_migrations.sh
+          bash deployment/scripts/seed_config.sh
+          bash deployment/scripts/smoke_test.sh
+
+  deploy-production:
+    name: Deploy Production
+    needs: deploy-development
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: production          # requires manual approval (§406 gate)
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply migrations + seed config + smoke (production)
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          N8N_HEALTH_URL: ${{ secrets.PROD_N8N_HEALTH_URL }}
+        run: |
+          bash deployment/scripts/apply_migrations.sh
+          bash deployment/scripts/seed_config.sh
+          bash deployment/scripts/smoke_test.sh

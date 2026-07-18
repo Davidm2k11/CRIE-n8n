@@ -1,0 +1,159 @@
+{
+  "name": "SW-008 LLM Knowledge",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "When Executed by WF-001",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "inputSource": "passThrough"
+      },
+      "notes": "Input data mode = Accept all data (passThrough). n8n source: when inputSource==PASSTHROUGH the trigger returns inputData unchanged, INCLUDING binary. Required so binary from the parent Execute Workflow node reaches this sub-workflow. typeVersion 1.1 (1 is deprecated)."
+    },
+    {
+      "id": "load-prompt",
+      "name": "Load PR-001 + LLM Settings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT settings FROM configuration.providers WHERE kind='llm') AS settings, system_prompt, user_prompt FROM configuration.prompt_versions WHERE prompt_id='PR-001' ORDER BY version DESC LIMIT 1;"
+      },
+      "notes": "Loads prompt body (R-08/§608, never embedded) + llm settings. CRIE Postgres credential."
+    },
+    {
+      "id": "build",
+      "name": "Build LLM Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Build the OpenAI chat request from PR-001 + llm settings. No secrets here.\nconst prow = $('Load PR-001 + LLM Settings').first().json;\nconst settings = prow.settings;   // jsonb -> already an object            // llm provider settings\nconst sys = prow.system_prompt || '';\nconst usr = (prow.user_prompt || '').replace('{{ocr}}', JSON.stringify($('When Executed by WF-001').first().json.ocr));\nreturn [{ json: { _model: settings.model, _temp: settings.temperature ?? 0, _max: settings.maxTokens ?? 4096,\n  messages: [ ...(sys?[{role:'system',content:sys}]:[]), {role:'user',content:usr} ] } }];"
+      },
+      "notes": "Inject OCR into prompt; assemble messages."
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI Chat Completions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json._model, temperature: $json._temp, max_tokens: $json._max, response_format: { type: 'json_object' }, messages: $json.messages }) }}",
+        "options": {
+          "timeout": 45000,
+          "retry": {
+            "retry": {
+              "maxRetries": 3
+            }
+          }
+        }
+      },
+      "notes": "Credentialed OpenAI call. Swap provider by editing this node only (§360)."
+    },
+    {
+      "id": "shape",
+      "name": "Shape Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Enrichment: preserve incoming item (incl. ocr, metadata), add { knowledge }.\nconst incoming = $('When Executed by WF-001').first().json;\nconst resp = $json;\nconst content = resp.choices && resp.choices[0] && resp.choices[0].message && resp.choices[0].message.content;\nlet parsed; try { parsed = JSON.parse(content); } catch(e){ parsed = { knowledgeUnits: [] }; }\nconst knowledgeUnits = parsed.knowledgeUnits || (Array.isArray(parsed)?parsed:[]);\nreturn [{ json: { ...incoming, knowledge: { knowledgeUnits } } }];"
+      },
+      "notes": "-> { knowledge } contract (ids assigned downstream in WF-001)."
+    }
+  ],
+  "connections": {
+    "When Executed by WF-001": {
+      "main": [
+        [
+          {
+            "node": "Load PR-001 + LLM Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load PR-001 + LLM Settings": {
+      "main": [
+        [
+          {
+            "node": "Build LLM Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build LLM Request": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Chat Completions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Completions": {
+      "main": [
+        [
+          {
+            "node": "Shape Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "workflowVersion": "1.4.1",
+    "sw": "SW-008",
+    "canonicalFn": "sw008_knowledgeExtraction",
+    "contract": {
+      "input": "{ ocr }",
+      "output": "{ knowledge:{ knowledgeUnits:[...] } }"
+    },
+    "note": "LLM via HTTP Request node; prompt loaded from configuration.prompt_versions (never embedded).",
+    "enrichment": "output = {...incomingItem, newResult}; never discards accumulated state",
+    "jsonbFix": "settings is jsonb (object); removed JSON.parse on settings; LLM-content parse retained",
+    "triggerFix": "executeWorkflowTrigger upgraded to 1.1 inputSource=passThrough for binary passthrough",
+    "changelog": [
+      "v1.4.1: Fixed stale copy-paste reference. 'Build LLM Request' referenced $('Load PR-002 + LLM Settings') — a node that does not exist in SW-008 (its node is 'Load PR-001 + LLM Settings'). Would have thrown \"hasn't been executed\" at runtime. Reference retargeted; stale PR-002 comment corrected. No logic change."
+    ]
+  }
+}

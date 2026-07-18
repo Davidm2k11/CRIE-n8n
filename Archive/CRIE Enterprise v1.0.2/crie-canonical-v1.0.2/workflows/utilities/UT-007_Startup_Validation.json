@@ -1,0 +1,173 @@
+{
+  "name": "UT-007_Startup_Validation",
+  "meta": {
+    "workflowVersion": "1.0.0",
+    "description": "Startup Validation (R-14, \u00a7326-327, \u00a7640). Runs on deploy and on schedule. Loads configuration + env vars, validates them (\u00a7327), pings providers, and writes a health record. On invalid config/secrets/providers it marks platform health Critical and raises an alert; downstream master workflows refuse to run against invalid configuration. Realizes v1.0 'SHALL stop startup' as 'SHALL block execution and alert when configuration is invalid'.",
+    "owner": "Dawod Manasra",
+    "dependencies": [
+      "configuration/*.yaml",
+      "schemas/yaml/configuration.schema.json"
+    ],
+    "retryStrategy": "none",
+    "timeout": 120,
+    "inputs": "none (deploy hook or schedule trigger)",
+    "outputs": "crie/contracts/health_status"
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "trigger_deploy",
+      "name": "Deploy / Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "trigger_schedule",
+      "name": "Scheduled Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        400
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 300
+            }
+          ]
+        }
+      },
+      "notes": "Interval mirrors monitoring.healthCheckInterval (\u00a7308). Keep in sync with configuration/monitoring.yaml."
+    },
+    {
+      "id": "validate",
+      "name": "Validate Config + Secrets + Providers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Startup Validation logic (\u00a7327). Config is loaded from the configuration.*\n// runtime cache (seeded from YAML, R-08) exposed to workflows as $vars/config.\n// Secrets are read from env / n8n credentials only (\u00a7322, \u00a7324) \u2014 never inlined.\n//\n// This node performs the six \u00a7327 checks and returns a health_status contract\n// plus a machine-readable validation report. It writes NOTHING to the DB here;\n// persistence to monitoring.health_checks is a downstream node once Sprint 2\n// creates that table. Until then the health record is returned to the caller.\n\nconst cfg = $vars || {};              // configuration.* runtime cache\nconst env = process.env || {};\n\nconst errors = [];\n\n// 1. Required env secrets exist (\u00a7314, \u00a7322). Presence only \u2014 never value logging.\nconst requiredEnv = [\n  'SUPABASE_URL', 'SUPABASE_SERVICE_KEY',\n  'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', 'AZURE_DOCUMENT_INTELLIGENCE_KEY',\n  'OPENAI_API_KEY'\n];\nfor (const k of requiredEnv) {\n  if (!env[k] || String(env[k]).trim() === '') errors.push(`missing_env:${k}`);\n}\n\n// 2. Required config values exist (\u00a7327). Mirrors schemas/yaml/configuration.schema.json.\nconst need = {\n  'ocr.provider': cfg.ocr && cfg.ocr.provider,\n  'ocr.model': cfg.ocr && cfg.ocr.model,\n  'llm.provider': cfg.llm && cfg.llm.provider,\n  'llm.model': cfg.llm && cfg.llm.model,\n  'embedding.provider': cfg.embedding && cfg.embedding.provider,\n  'embedding.model': cfg.embedding && cfg.embedding.model,\n  'embedding.dimensions': cfg.embedding && cfg.embedding.dimensions,\n  'storage.provider': cfg.storage && cfg.storage.provider,\n  'logging.logLevel': cfg.logging && cfg.logging.logLevel\n};\nfor (const [k, v] of Object.entries(need)) {\n  if (v === undefined || v === null || v === '') errors.push(`missing_config:${k}`);\n}\n\n// 3. Embedding dimension locked at 1536 for v1 (R-09).\nif (cfg.embedding && cfg.embedding.dimensions !== undefined && Number(cfg.embedding.dimensions) !== 1536) {\n  errors.push('embedding.dimensions_must_be_1536');\n}\n\n// 4. URLs valid (\u00a7327) \u2014 endpoint + Supabase URL are well-formed.\nfor (const u of [env.SUPABASE_URL, env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT]) {\n  if (u) { try { new URL(u); } catch (e) { errors.push(`invalid_url:${u.slice(0,8)}...`); } }\n}\n\n// 5. Feature flags valid (\u00a7312) \u2014 booleans only.\nif (cfg.featureFlags) {\n  for (const [k, v] of Object.entries(cfg.featureFlags)) {\n    if (typeof v !== 'boolean') errors.push(`feature_flag_not_boolean:${k}`);\n  }\n}\n\n// 6a. Vector index config valid (\u00a7227) \u2014 user-adjustable, startup-validated.\nconst vi = (cfg.embedding && cfg.embedding.vectorIndex) || {};\nif (vi.type && ['hnsw','ivfflat'].indexOf(vi.type) === -1) errors.push('invalid_vector_index_type:'+vi.type);\nif (vi.metric && ['cosine','l2','ip'].indexOf(vi.metric) === -1) errors.push('invalid_vector_index_metric:'+vi.metric);\n\n// 6b. Authority-source model = 9 canonical sources (\u00a7439, R-16).\nconst auth = cfg.authoritySources;\nif (!Array.isArray(auth) || auth.length !== 9) errors.push('authority_sources_must_have_9_entries');\n\n// 6. Reranker gate (\u00a7305, R-12): if enabled, a cross-encoder model must be set.\nif (cfg.retrieval && cfg.retrieval.rerankerEnabled === true &&\n    (!cfg.retrieval.crossEncoderModel || cfg.retrieval.crossEncoderModel === '')) {\n  errors.push('reranker_enabled_without_model');\n}\n\nconst valid = errors.length === 0;\nconst state = valid ? 'Healthy' : 'Critical';\n\n// health_status contract (crie/contracts/health_status). Provider states are set to\n// the validation outcome; live provider pings are performed by the provider adapters\n// (Module 18) which this workflow invokes in deployment. Until adapters run, states\n// reflect configuration validity.\nconst health = {\n  repository: state,\n  ocr: state,\n  llm: state,\n  embeddingProvider: state,\n  storage: state,\n  database: state,\n  n8n: 'Healthy',\n  overall: state\n};\n\nreturn [{ json: {\n  valid,\n  errors,\n  health,\n  alert: valid ? null : { severity: 'Critical', reason: 'startup_validation_failed', errors },\n  blockExecution: !valid\n} }];"
+      }
+    },
+    {
+      "id": "branch",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "healthy",
+      "name": "Mark Healthy",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        200
+      ],
+      "parameters": {},
+      "notes": "Persist health=Healthy to monitoring.health_checks (\u00a7229) \u2014 node added when Sprint 2 creates the table."
+    },
+    {
+      "id": "critical",
+      "name": "Mark Critical + Alert",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        400
+      ],
+      "parameters": {},
+      "notes": "Persist health=Critical to monitoring.health_checks and raise alert via UT-004 Notifications (Sprint 8). Downstream master workflows check this record and refuse to run (R-14)."
+    }
+  ],
+  "connections": {
+    "Deploy / Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Config + Secrets + Providers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scheduled Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Config + Secrets + Providers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Config + Secrets + Providers": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Mark Healthy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Critical + Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

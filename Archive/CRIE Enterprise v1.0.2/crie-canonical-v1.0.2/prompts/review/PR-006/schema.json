@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "crie/prompts/PR-006/schema.json",
+  "title": "PR-006 Proposal Writing output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["response", "assumptions", "limitations", "gapAnalysis", "riskRegister"],
+  "properties": {
+    "response": { "type": "string" },
+    "assumptions": { "type": "array", "items": { "type": "string" } },
+    "limitations": { "type": "array", "items": { "type": "string" } },
+    "gapAnalysis": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gapType", "description"],
+        "properties": {
+          "gapType": { "type": "string", "enum": ["Documentation Gap", "Product Gap", "Knowledge Gap"] },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "riskRegister": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["risk", "description", "severity", "likelihood", "mitigation", "owner"],
+        "properties": {
+          "risk": { "type": "string" },
+          "description": { "type": "string" },
+          "severity": { "type": "string", "enum": ["Low", "Medium", "High", "Critical"] },
+          "likelihood": { "type": "string", "enum": ["Low", "Medium", "High"] },
+          "mitigation": { "type": "string" },
+          "owner": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

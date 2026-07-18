@@ -1,0 +1,7 @@
+# monitoring.yaml — Monitoring configuration (authored source of truth, R-08). §308
+monitoring:
+  telemetryEnabled: true               # Principle 8 observability
+  costTracking: true
+  performanceTracking: true
+  benchmarkEnabled: true
+  healthCheckInterval: 300             # seconds between scheduled health checks (R-14)

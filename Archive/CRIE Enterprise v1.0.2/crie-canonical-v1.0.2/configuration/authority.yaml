@@ -1,0 +1,40 @@
+# =============================================================================
+# CRIE — authority.yaml
+# Authored source of truth for the authority-source model (R-08 / R-16 / §439).
+# Canonical 9-source table; supersedes §72. Seeded into the authority reference
+# table via the seed/sync step (§236). Scores SHALL remain configurable (§439).
+#
+# Resolution rules (§440):
+#   higher authority wins → newer version wins → return both + human review.
+#   Conflicts SHALL NEVER be silently discarded.
+# License: All Rights Reserved, Copyright © 2026 Dawod Manasra.
+# =============================================================================
+
+schemaVersion: "1.1"
+
+# Canonical §439 table (R-16). 9 sources, scores 0..100.
+authoritySources:
+  - source: "Approved Product Specification"
+    score: 100
+  - source: "Official SRS"
+    score: 98
+  - source: "Product Manual"
+    score: 95
+  - source: "Training Material"
+    score: 90
+  - source: "Architecture Guide"
+    score: 88
+  - source: "Technical Design"
+    score: 85
+  - source: "Release Notes"
+    score: 80
+  - source: "Previous Compliance Matrix"
+    score: 65
+  - source: "Internal Notes"
+    score: 40
+
+# §440 Authority Resolution ordering (deterministic).
+resolution:
+  primary: "authorityScore"     # higher wins
+  tiebreak1: "version"          # newer wins
+  tiebreak2: "returnBothAndReview"

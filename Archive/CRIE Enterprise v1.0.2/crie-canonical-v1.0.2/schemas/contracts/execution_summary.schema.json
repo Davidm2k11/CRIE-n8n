@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crie/contracts/execution_summary",
+  "title": "Execution Summary",
+  "description": "Object every workflow returns, consumed by Monitoring (§216).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workflow", "executionId", "status", "duration"],
+  "properties": {
+    "workflow":            { "type": "string" },
+    "executionId":         { "type": "string" },
+    "status":              { "type": "string", "enum": ["SUCCESS", "FAILED", "SKIPPED"] },
+    "duration":            { "type": "number", "minimum": 0 },
+    "documentsProcessed":  { "type": "integer", "minimum": 0 },
+    "knowledgeUnits":      { "type": "integer", "minimum": 0 },
+    "evidenceObjects":     { "type": "integer", "minimum": 0 },
+    "chunks":              { "type": "integer", "minimum": 0 },
+    "embeddings":          { "type": "integer", "minimum": 0 },
+    "cost":                { "type": "number",  "minimum": 0 }
+  }
+}

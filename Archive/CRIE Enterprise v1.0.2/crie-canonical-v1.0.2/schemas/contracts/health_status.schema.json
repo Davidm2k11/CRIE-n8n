@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crie/contracts/health_status",
+  "title": "Health Status",
+  "description": "Canonical Health API contract (§18, §366). Each monitored component reports one of the four health states. Persisted to monitoring.health_checks (§229, Sprint 2).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repository", "ocr", "llm", "storage"],
+  "$defs": {
+    "state": { "type": "string", "enum": ["Healthy", "Warning", "Critical", "Offline"] }
+  },
+  "properties": {
+    "repository":       { "$ref": "#/$defs/state" },
+    "ocr":              { "$ref": "#/$defs/state" },
+    "llm":              { "$ref": "#/$defs/state" },
+    "embeddingProvider":{ "$ref": "#/$defs/state" },
+    "storage":          { "$ref": "#/$defs/state" },
+    "database":         { "$ref": "#/$defs/state" },
+    "n8n":              { "$ref": "#/$defs/state" },
+    "googleDrive":      { "$ref": "#/$defs/state" },
+    "overall":          { "$ref": "#/$defs/state" }
+  }
+}

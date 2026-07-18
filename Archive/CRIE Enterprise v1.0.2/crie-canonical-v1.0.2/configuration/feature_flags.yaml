@@ -1,0 +1,9 @@
+# feature_flags.yaml — Feature flags (authored source of truth, R-08). §312
+# All flags default to false until the feature is implemented (§312).
+featureFlags:
+  knowledgeGraph: false
+  multiAgentReasoning: false
+  automaticReEmbedding: false
+  sharePointConnector: false
+  proposalGenerator: false
+  executiveDashboard: false

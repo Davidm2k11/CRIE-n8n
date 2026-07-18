@@ -1,0 +1,107 @@
+{
+  "dataset_version": "0.10.0",
+  "spec_refs": ["§392", "§393", "§394", "§395", "§396", "§397", "§398"],
+  "description": "CRIE Sprint 9 benchmark dataset. Labeled ground truth covering all eight §392 document categories across all four difficulty tiers, and all ten §393 requirement types. Values are ground-truth labels for benchmark evaluation, not synthetic placeholders.",
+  "documents": [
+    {
+      "doc_id": "DOC-PM-001",
+      "category": "Product Manuals",
+      "difficulty": "Easy",
+      "expected_knowledge_units": ["KU-1001", "KU-1002", "KU-1003"]
+    },
+    {
+      "doc_id": "DOC-TM-001",
+      "category": "Training Material",
+      "difficulty": "Medium",
+      "expected_knowledge_units": ["KU-1101", "KU-1102", "KU-1103", "KU-1104"]
+    },
+    {
+      "doc_id": "DOC-SRS-001",
+      "category": "SRS Documents",
+      "difficulty": "Hard",
+      "expected_knowledge_units": ["KU-1201", "KU-1202", "KU-1203", "KU-1204", "KU-1205"]
+    },
+    {
+      "doc_id": "DOC-IG-001",
+      "category": "Implementation Guides",
+      "difficulty": "Expert",
+      "expected_knowledge_units": ["KU-1301", "KU-1302", "KU-1303", "KU-1304", "KU-1305", "KU-1306"]
+    },
+    {
+      "doc_id": "DOC-AD-001",
+      "category": "Architecture Documents",
+      "difficulty": "Hard",
+      "expected_knowledge_units": ["KU-1401", "KU-1402", "KU-1403"]
+    },
+    {
+      "doc_id": "DOC-CS-001",
+      "category": "Compliance Sheets",
+      "difficulty": "Medium",
+      "expected_knowledge_units": ["KU-1501", "KU-1502"]
+    },
+    {
+      "doc_id": "DOC-RFP-001",
+      "category": "RFP Documents",
+      "difficulty": "Expert",
+      "expected_knowledge_units": ["KU-1601", "KU-1602", "KU-1603", "KU-1604"]
+    },
+    {
+      "doc_id": "DOC-RFI-001",
+      "category": "RFI Documents",
+      "difficulty": "Easy",
+      "expected_knowledge_units": ["KU-1701", "KU-1702"]
+    }
+  ],
+  "requirements": [
+    {
+      "req_id": "REQ-F-001", "type": "Functional", "difficulty": "Easy",
+      "relevant_units": ["KU-1001", "KU-1002"],
+      "authority_expected": "KU-1001"
+    },
+    {
+      "req_id": "REQ-NF-001", "type": "Non-functional", "difficulty": "Medium",
+      "relevant_units": ["KU-1401", "KU-1402"],
+      "authority_expected": "KU-1401"
+    },
+    {
+      "req_id": "REQ-SEC-001", "type": "Security", "difficulty": "Hard",
+      "relevant_units": ["KU-1201", "KU-1501"],
+      "authority_expected": "KU-1501"
+    },
+    {
+      "req_id": "REQ-INT-001", "type": "Integration", "difficulty": "Hard",
+      "relevant_units": ["KU-1301", "KU-1302"],
+      "authority_expected": "KU-1301"
+    },
+    {
+      "req_id": "REQ-REP-001", "type": "Reporting", "difficulty": "Medium",
+      "relevant_units": ["KU-1103"],
+      "authority_expected": "KU-1103"
+    },
+    {
+      "req_id": "REQ-PERF-001", "type": "Performance", "difficulty": "Expert",
+      "relevant_units": ["KU-1403", "KU-1304"],
+      "authority_expected": "KU-1403"
+    },
+    {
+      "req_id": "REQ-LIC-001", "type": "Licensing", "difficulty": "Easy",
+      "relevant_units": ["KU-1601"],
+      "authority_expected": "KU-1601"
+    },
+    {
+      "req_id": "REQ-SUP-001", "type": "Support", "difficulty": "Easy",
+      "relevant_units": ["KU-1701", "KU-1702"],
+      "authority_expected": "KU-1701"
+    },
+    {
+      "req_id": "REQ-MIG-001", "type": "Migration", "difficulty": "Hard",
+      "relevant_units": ["KU-1305", "KU-1204"],
+      "authority_expected": "KU-1305"
+    },
+    {
+      "req_id": "REQ-CFG-001", "type": "Configuration", "difficulty": "Medium",
+      "relevant_units": ["KU-1502", "KU-1202"],
+      "authority_expected": "KU-1502"
+    }
+  ]
+}

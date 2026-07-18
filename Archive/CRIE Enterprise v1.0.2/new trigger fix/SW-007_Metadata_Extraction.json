@@ -1,0 +1,163 @@
+{
+  "name": "SW-007 LLM Metadata",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "When Executed by WF-001",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "notes": "Accept all data (passthrough). inputSource MUST be lowercase 'passthrough'; n8n silently ignores camelCase 'passThrough' on import and falls back to defined-fields mode, dropping the caller's payload (and any binary)."
+    },
+    {
+      "id": "load-prompt",
+      "name": "Load PR-002 + LLM Settings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT settings FROM configuration.providers WHERE kind='llm') AS settings, system_prompt, user_prompt FROM configuration.prompt_versions WHERE prompt_id='PR-002' ORDER BY version DESC LIMIT 1;"
+      },
+      "notes": "Loads prompt body (R-08/§608, never embedded) + llm settings. CRIE Postgres credential."
+    },
+    {
+      "id": "build",
+      "name": "Build LLM Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// ===== SW-007 build() — METADATA from a BOUNDED FRONT-MATTER WINDOW =====\n// Metadata (title, version, author, effective date) is DOCUMENT-LEVEL and lives in the front\n// matter. Batching it would produce duplicate and CONFLICTING metadata (batch 7 has no title;\n// batch 12 invents one) and burn tokens for nothing. So SW-007 does NOT batch: it sends a\n// bounded window and makes ONE call.\n//\n// This is also a QUALITY improvement, not merely a token saving: sending the whole document and\n// asking for the title invites the model to pick up spurious \"metadata\" from body text.\nconst incoming = $('When Executed by WF-001').first().json;\nconst prow = $('Load PR-002 + LLM Settings').first().json;\nconst s = prow.settings || {};\nconst sys = prow.system_prompt || '';\n\nconst metadataParagraphs = Number(s.metadataParagraphs ?? 80);   // R-08: authored config\nconst metadataScanPages  = Number(s.metadataScanPages ?? 5);\nconst reservedOutput     = Number(s.reservedOutputTokens ?? 4000);\n\nconst ocr = incoming.ocr || {};\nconst paras = ocr.paragraphs || [];\n\n// Window = the first N paragraphs, PLUS every title/sectionHeading within the first M pages\n// (headings carry version/scope information that may sit past the first N paragraphs).\nconst picked = new Map();\nfor (const p of paras.slice(0, metadataParagraphs)) picked.set(p.index, p);\nfor (const p of paras) {\n  if (!p.role) continue;\n  if (p.role !== 'title' && p.role !== 'sectionHeading') continue;\n  // For paginated formats respect the page bound; for DOCX (page===null) take early headings only.\n  const withinScan = (p.page != null) ? (p.page <= metadataScanPages)\n                                      : (p.index <= metadataParagraphs * 4);\n  if (withinScan) picked.set(p.index, p);\n}\nconst window = Array.from(picked.values()).sort((a, b) => a.index - b.index);\n\nconst lines = [];\nlet lastPage = null;\nfor (const p of window) {\n  if (p.page != null && p.page !== lastPage) { lines.push('=== PAGE ' + p.page + ' ==='); lastPage = p.page; }\n  const loc = (p.page != null) ? ('p' + p.page + ':para' + p.index) : ('para' + p.index);\n  const role = p.role ? (' (' + p.role + ')') : '';\n  lines.push('[' + loc + ']' + role + ' ' + p.text);\n}\nconst excerpt = lines.join('\\n');\n\n// PR-002 UNCHANGED — the {{ocr}} placeholder receives the front-matter window.\nconst usr = (prow.user_prompt || '').replace('{{ocr}}', excerpt);\n\nconst stats = {\n  sourceFormat: ocr.sourceFormat || 'unknown',\n  documentParagraphs: paras.length,\n  windowParagraphs: window.length,\n  headingsIncluded: window.filter(p => p.role).length,\n  promptChars: usr.length,\n  approxPromptTokens: Math.round(usr.length / 4),\n};\nconsole.log('[SW-007 front-matter window] ' + JSON.stringify(stats));\n\nreturn [{ json: {\n  _model: s.model,\n  _temp:  s.temperature ?? 0,\n  _max:   reservedOutput,\n  _docStats: stats,\n  messages: [ ...(sys ? [{ role: 'system', content: sys }] : []), { role: 'user', content: usr } ]\n}}];"
+      },
+      "notes": "Metadata is document-level, so SW-007 does NOT batch. It sends a BOUNDED front-matter window (first metadataParagraphs paragraphs + title/sectionHeading roles within metadataScanPages) in ONE call. Batching metadata would yield duplicate/conflicting values and waste tokens. Window size is authored config (R-08). PR-002 is unchanged. Typically <5k tokens."
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI Chat Completions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json._model, temperature: $json._temp, max_tokens: $json._max, response_format: { type: 'json_object' }, messages: $json.messages }) }}",
+        "options": {
+          "timeout": 45000,
+          "retry": {
+            "retry": {
+              "maxRetries": 3
+            }
+          }
+        }
+      },
+      "notes": "Credentialed OpenAI call. Swap provider by editing this node only (§360)."
+    },
+    {
+      "id": "shape",
+      "name": "Shape Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Enrichment: preserve incoming item (incl. ocr for SW-008), add { metadata }.\nconst incoming = $('When Executed by WF-001').first().json;\nconst resp = $json;\nconst content = resp.choices && resp.choices[0] && resp.choices[0].message && resp.choices[0].message.content;\nlet parsed; try { parsed = JSON.parse(content); } catch(e){ parsed = { metadata: [] }; }\nconst metadata = Array.isArray(parsed) ? parsed : (parsed.metadata || []);\nreturn [{ json: { ...incoming, metadata } }];"
+      },
+      "notes": "-> { metadata } contract."
+    }
+  ],
+  "connections": {
+    "When Executed by WF-001": {
+      "main": [
+        [
+          {
+            "node": "Load PR-002 + LLM Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load PR-002 + LLM Settings": {
+      "main": [
+        [
+          {
+            "node": "Build LLM Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build LLM Request": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Chat Completions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Completions": {
+      "main": [
+        [
+          {
+            "node": "Shape Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "workflowVersion": "3.0.0",
+    "sw": "SW-007",
+    "canonicalFn": "sw007_metadataExtraction",
+    "contract": {
+      "input": "{ ocr }",
+      "output": "{ metadata:[{key,value}] }"
+    },
+    "note": "LLM via HTTP Request node; prompt loaded from configuration.prompt_versions (never embedded).",
+    "enrichment": "output = {...incomingItem, newResult}; never discards accumulated state",
+    "jsonbFix": "settings is jsonb (object); removed JSON.parse on settings; LLM-content parse retained",
+    "triggerFix": "executeWorkflowTrigger upgraded to 1.1 inputSource=passThrough for binary passthrough",
+    "changelog": [
+      "v1.5.0: Build LLM Request no longer serializes the whole ocr object (which embeds ocr.raw = the full Azure analyzeResult). It now substitutes flattened page/paragraph-marked plain text, cutting the prompt ~25x and keeping it inside the model context. Page/paragraph markers preserved for PR-001 sourcePage/sourceParagraph. Adds maxPromptChars budget.",
+      "v1.6.0: flattenOcr prefers provider paragraphs (Azure analyzeResult.paragraphs via ocr.pages[].paragraphs), falling back to blank-line splitting only when absent. Emits document statistics {ocrPages, ocrCharacters, approxPromptTokens, truncated, paragraphSource} to the execution log and onto _docStats.",
+      "v2.0.0: consumes the normalized OCR model. flattenOcr walks ocr.paragraphs[] (universal unit) instead of ocr.pages[].text (which collapsed DOCX to one page and discarded the document). Locators are [pN:paraM] for paginated formats and [paraM] for DOCX. Stats now include ocrParagraphs, sourceFormat and pagination.",
+      "v3.0.0: metadata now extracted from a BOUNDED FRONT-MATTER WINDOW in a single call, instead of flattening the entire document (which both wasted tokens and invited spurious metadata from body text). Window = first metadataParagraphs paragraphs + early title/sectionHeading roles. PR-002 unchanged. Deliberately NOT batched: metadata is document-level, so batching would produce duplicate and conflicting values.",
+      "FIX: executeWorkflowTrigger inputSource was camelCase 'passThrough', which n8n silently ignores on import — the trigger fell back to defined-fields mode and dropped the caller's payload. Corrected to lowercase 'passthrough' (Accept all data)."
+    ]
+  }
+}

@@ -1,0 +1,290 @@
+{
+  "name": "SW-008 LLM Knowledge",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "When Executed by WF-001",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "inputSource": "passThrough"
+      },
+      "notes": "Input data mode = Accept all data (passThrough). n8n source: when inputSource==PASSTHROUGH the trigger returns inputData unchanged, INCLUDING binary. Required so binary from the parent Execute Workflow node reaches this sub-workflow. typeVersion 1.1 (1 is deprecated)."
+    },
+    {
+      "id": "load-prompt",
+      "name": "Load PR-001 + LLM Settings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT settings FROM configuration.providers WHERE kind='llm') AS settings, system_prompt, user_prompt FROM configuration.prompt_versions WHERE prompt_id='PR-001' ORDER BY version DESC LIMIT 1;"
+      },
+      "notes": "Loads prompt body (R-08/§608, never embedded) + llm settings. CRIE Postgres credential."
+    },
+    {
+      "parameters": {
+        "jsCode": "/* ===========================================================================\n * DOCUMENT BATCH PLANNER  —  planDocumentBatches()\n * ---------------------------------------------------------------------------\n * STABLE INTERNAL CONTRACT. Lift-ready.\n *\n * This block is deliberately PURE and self-contained so it can be lifted VERBATIM\n * into a shared component (SW-016 Document Batch Planner) the moment a second\n * concrete consumer exists. It currently lives inside SW-008 because SW-008 is the\n * only consumer, and an Execute Workflow boundary for a pure function would buy a\n * real failure mode (item replacement / state loss — see Engineering Guidelines §3-4)\n * for no runtime benefit.\n *\n * INDEPENDENCE INVARIANTS (do not violate; they are what make it liftable):\n *   - Knows NOTHING about prompts (PR-001/PR-002), providers (OpenAI/Azure), or\n *     knowledge-unit semantics (statement/category/authoritySource).\n *   - Reads ONLY the normalized OCR model produced by SW-005.\n *   - No I/O, no side effects, no n8n globals ($json, $(), this.helpers).\n *   - Deterministic: identical input -> identical output.\n *\n * INPUT\n *   ocr     : normalized OCR model (SW-005). Uses ocr.paragraphs[] and ocr.pagination.\n *             paragraphs[] = [{ index, text, page, role, offset }]\n *   budget  : {\n *               maxPromptTokens      : number  // hard cap on OCR text tokens per batch\n *               overlapParagraphs    : number  // trailing paragraphs repeated into the next batch\n *               includeHeadingBreadcrumb : bool// prepend nearest heading ancestry as context\n *               maxBatches           : number  // runaway guard\n *               charsPerToken        : number  // estimation ratio (no tokenizer in the Code node)\n *             }\n *\n * OUTPUT\n *   {\n *     batches: [{\n *       index              : 1-based batch number\n *       paragraphs         : [{ index, text, page, role }]   // INCLUDING overlap paragraphs\n *       headingBreadcrumb  : string|null   // e.g. \"3 Security > 3.2 Access Control\"\n *       estimatedTokens    : number        // breadcrumb + locators + text\n *       firstParagraph     : number        // first paragraph.index in this batch (incl. overlap)\n *       lastParagraph      : number\n *       overlapFrom        : number|null   // paragraph.index where the overlap region starts\n *       newParagraphs      : number        // paragraphs NOT carried over as overlap\n *     }],\n *     stats: { totalBatches, totalParagraphs, totalEstimatedTokens,\n *              overlapParagraphsUsed, oversizedParagraphsSplit, truncated:false }\n *   }\n *\n * GUARANTEES\n *   - Every paragraph appears in at least one batch. NOTHING is dropped. There is no\n *     truncation: the planner's purpose is to make truncation unnecessary.\n *   - Paragraph boundaries are never split across batches, EXCEPT for a single paragraph\n *     that alone exceeds maxPromptTokens, which is split at sentence boundaries into parts\n *     that each retain the ORIGINAL paragraph.index and page (traceability preserved).\n *   - Batches are contiguous and ordered; overlap is a trailing window of the previous batch.\n * =========================================================================== */\n\nfunction planDocumentBatches(ocr, budget) {\n  const cfg = budget || {};\n  const B = {\n    maxPromptTokens:          Number(cfg.maxPromptTokens) || 19200,\n    overlapParagraphs:        Number(cfg.overlapParagraphs != null ? cfg.overlapParagraphs : 3),\n    includeHeadingBreadcrumb: cfg.includeHeadingBreadcrumb !== false,\n    maxBatches:               Number(cfg.maxBatches) || 200,\n    charsPerToken:            Number(cfg.charsPerToken) || 4,\n  };\n\n  const paragraphs = (ocr && Array.isArray(ocr.paragraphs)) ? ocr.paragraphs : [];\n  const stats = {\n    totalBatches: 0, totalParagraphs: paragraphs.length, totalEstimatedTokens: 0,\n    overlapParagraphsUsed: 0, oversizedParagraphsSplit: 0, truncated: false,\n  };\n  if (!paragraphs.length) return { batches: [], stats };\n\n  // ---- token estimation ---------------------------------------------------\n  // No tokenizer is available in the n8n Code node, so we estimate from characters.\n  // The caller absorbs the error via a safety margin applied to maxPromptTokens.\n  const estTokens = (chars) => Math.ceil(chars / B.charsPerToken);\n  const LOCATOR_CHARS = 18;              // \"[p12:para143] (role) \"\n  const paraCost = (p) => estTokens(String(p.text || '').length + LOCATOR_CHARS);\n\n  // ---- oversized-paragraph split ------------------------------------------\n  // A single paragraph larger than the whole budget cannot fit any batch. Split it at\n  // sentence boundaries. Each part KEEPS the original index and page, so\n  // sourceParagraph / sourcePage traceability survives; `part` disambiguates.\n  function splitOversized(p) {\n    const maxChars = (B.maxPromptTokens - 200) * B.charsPerToken;   // room for framing\n    const text = String(p.text || '');\n    if (text.length <= maxChars) return [p];\n    const sentences = text.split(/(?<=[.!?])\\s+/);\n    const parts = [];\n    let cur = '';\n    for (const s of sentences) {\n      if (cur.length + s.length + 1 > maxChars && cur) { parts.push(cur); cur = s; }\n      else { cur = cur ? cur + ' ' + s : s; }\n    }\n    if (cur) parts.push(cur);\n    stats.oversizedParagraphsSplit++;\n    return parts.map((t, i) => ({\n      index: p.index,          // ORIGINAL index — traceability preserved\n      page: p.page,            // ORIGINAL page\n      role: p.role,\n      text: t,\n      part: i + 1,\n      partsTotal: parts.length,\n    }));\n  }\n\n  // Expand oversized paragraphs up front so packing sees only fittable units.\n  // MUST precede breadcrumbFor(), which walks `units` — after expansion, positions in\n  // `units` no longer correspond to positions in `paragraphs`.\n  const units = [];\n  for (const p of paragraphs) for (const u of splitOversized(p)) units.push(u);\n\n  // ---- heading breadcrumb -------------------------------------------------\n  // Structured REFERENCE context: the nearest heading ancestry above a batch start.\n  // Lets a batch classify statements correctly when the owning section heading fell into\n  // an earlier batch — a problem overlap structurally cannot solve (a heading may be\n  // hundreds of paragraphs back). Rendered as reference context, NOT extractable content.\n  function breadcrumbFor(unitPos) {\n    if (!B.includeHeadingBreadcrumb) return null;\n    let title = null, section = null;\n    for (let i = Math.min(unitPos, units.length - 1); i >= 0; i--) {\n      const u = units[i];\n      if (!u) continue;\n      if (u.role === 'sectionHeading' && !section) section = u.text;\n      if (u.role === 'title' && !title) title = u.text;\n      if (title && section) break;\n    }\n    const parts = [title, section].filter(Boolean);\n    return parts.length ? parts.join(' > ') : null;\n  }\n  const breadcrumbCost = (bc) => (bc ? estTokens(bc.length + 40) : 0);   // + framing text\n\n  // ---- greedy packing -----------------------------------------------------\n  const batches = [];\n  let i = 0;                       // position in units[]\n  let carry = [];                  // overlap window carried from the previous batch\n\n  while (i < units.length) {\n    if (batches.length >= B.maxBatches) {\n      // Runaway guard. Throw rather than silently drop content.\n      throw new Error(\n        'planDocumentBatches: exceeded maxBatches (' + B.maxBatches + ') at paragraph ' +\n        units[i].index + '. Raise maxBatches or maxPromptTokens; content must not be dropped.'\n      );\n    }\n\n    const bc = breadcrumbFor(i);\n    let tokens = breadcrumbCost(bc);\n    const batchParas = [];\n\n    // Overlap first: trailing window of the previous batch, for boundary context.\n    for (const c of carry) { batchParas.push(c); tokens += paraCost(c); }\n\n    // Then pack new paragraphs until the budget is reached.\n    let packedNew = 0;\n    while (i < units.length) {\n      const cost = paraCost(units[i]);\n      if (tokens + cost > B.maxPromptTokens && packedNew > 0) break;   // full (never emit empty)\n      batchParas.push(units[i]);\n      tokens += cost;\n      packedNew++;\n      i++;\n    }\n\n    batches.push({\n      index: batches.length + 1,\n      paragraphs: batchParas,\n      headingBreadcrumb: bc,\n      estimatedTokens: tokens,\n      firstParagraph: batchParas[0].index,\n      lastParagraph: batchParas[batchParas.length - 1].index,\n      overlapFrom: carry.length ? carry[0].index : null,\n      newParagraphs: packedNew,\n    });\n    stats.totalEstimatedTokens += tokens;\n    stats.overlapParagraphsUsed += carry.length;\n\n    // Overlap window for the NEXT batch: last N of THIS batch's NEW paragraphs.\n    // (Never re-overlap an overlap — that would compound across batches.)\n    const newOnly = batchParas.slice(carry.length);\n    carry = (B.overlapParagraphs > 0 && i < units.length)\n      ? newOnly.slice(-B.overlapParagraphs)\n      : [];\n  }\n\n  stats.totalBatches = batches.length;\n  return { batches, stats };\n}\n\n/* ---------------------------------------------------------------------------\n * renderBatch() — turn a planned batch into prompt-ready text.\n * Kept separate from planning: the PLANNER decides *what* goes in a batch; the\n * RENDERER decides *how it is presented*. Only the renderer is opinionated about\n * locator syntax, and it is still prompt/provider agnostic.\n *\n * The heading breadcrumb is rendered as explicit REFERENCE CONTEXT and clearly\n * fenced off, so a consumer's prompt can instruct the model not to extract from it.\n * ------------------------------------------------------------------------- */\nfunction renderBatch(batch) {\n  const lines = [];\n\n  if (batch.headingBreadcrumb) {\n    lines.push('--- REFERENCE CONTEXT (for interpretation only; do NOT extract from this section) ---');\n    lines.push('Current section: ' + batch.headingBreadcrumb);\n    lines.push('--- END REFERENCE CONTEXT ---');\n    lines.push('');\n  }\n\n  lines.push('--- DOCUMENT EXCERPT (extract from this section only) ---');\n  let lastPage = null;\n  for (const p of batch.paragraphs) {\n    if (p.page != null && p.page !== lastPage) {\n      lines.push('=== PAGE ' + p.page + ' ===');\n      lastPage = p.page;\n    }\n    const loc = (p.page != null) ? ('p' + p.page + ':para' + p.index) : ('para' + p.index);\n    // Only mark parts when a paragraph was ACTUALLY split (partsTotal > 1). Emitting\n    // \"part 1/1\" on every unsplit paragraph is prompt noise and invites the model to\n    // treat it as meaningful.\n    const part = (p.partsTotal && p.partsTotal > 1) ? (' part ' + p.part + '/' + p.partsTotal) : '';\n    const role = p.role ? (' (' + p.role + ')') : '';\n    lines.push('[' + loc + part + ']' + role + ' ' + p.text);\n  }\n  lines.push('--- END DOCUMENT EXCERPT ---');\n  return lines.join('\\n');\n}\n\n// ===== SW-008 plan() — build the batch plan and seed loop state on the ITEM =====\nconst incoming = $('When Executed by WF-001').first().json;\nconst prow = $('Load PR-001 + LLM Settings').first().json;\nconst s = prow.settings || {};\n\n// Token budget (R-08: authored config, never hardcoded).\nconst tpmBudget            = Number(s.tpmBudget ?? 30000);\nconst reservedOutputTokens = Number(s.reservedOutputTokens ?? 4000);\nconst safetyMargin         = Number(s.safetyMargin ?? 0.80);\nconst promptOverhead       = Number(s.promptOverheadTokens ?? 800);\nconst maxPromptTokens = Math.max(1000,\n  Math.floor(tpmBudget * safetyMargin - reservedOutputTokens - promptOverhead));\n\nconst budget = {\n  maxPromptTokens,\n  overlapParagraphs:        Number(s.batchOverlapParagraphs ?? 3),\n  includeHeadingBreadcrumb: s.includeHeadingBreadcrumb !== false,\n  maxBatches:               Number(s.maxBatches ?? 60),\n  charsPerToken:            Number(s.charsPerToken ?? 4),\n};\n\nconst ocr = incoming.ocr || {};\nconst plan = planDocumentBatches(ocr, budget);\n\n// paragraph roles -> needed by the merge ranking (rule 4: body text beats header/footer)\nconst paragraphRoles = {};\nfor (const p of (ocr.paragraphs || [])) if (p.role) paragraphRoles[p.index] = p.role;\n\n// Pacing is NOT pre-computed here: collect() derives it from the ACTUAL tokens each batch\n// spent (usage.total_tokens), which is both more accurate and self-correcting. We seed 0 so\n// the first batch is issued immediately.\nconst pacingMs = 0;\n\nconsole.log('[SW-008 plan] ' + JSON.stringify({\n  paragraphs: plan.stats.totalParagraphs,\n  batches: plan.stats.totalBatches,\n  maxPromptTokens,\n  estTotalTokens: plan.stats.totalEstimatedTokens,\n  overlapParagraphs: budget.overlapParagraphs,\n  oversizedSplit: plan.stats.oversizedParagraphsSplit,\n}));\n\nif (plan.stats.totalBatches === 0) {\n  throw new Error('SW-008: OCR produced no paragraphs to extract from.');\n}\n\nreturn [{ json: { ...incoming,\n  _bx: {\n    batches: plan.batches,\n    planStats: plan.stats,\n    cursor: 0,                 // index of the NEXT batch to execute\n    results: [],               // accumulated per-batch outputs — rides the ITEM (§3.6)\n    rejected: [],              // hallucinated-locator rejections\n    paragraphRoles,\n    pacingMs,\n    reservedOutputTokens,\n  } }}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "id": "plan",
+      "name": "plan() — Batch Plan",
+      "position": [
+        680,
+        300
+      ],
+      "notes": "Pure batch planner (lift-ready; see the delineated block) + loop-state seeding. Token budget derived from authored config (tpmBudget/reservedOutputTokens/safetyMargin) — R-08, never hardcoded. Batch results accumulate on the ITEM, not via run-history lookup (Guidelines §3.6)."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6ff4fa92-6ee8-4d37-986e-f139df0a1051",
+              "leftValue": "={{ $json._bx.cursor < $json._bx.batches.length }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "id": "if-more",
+      "name": "more batches?",
+      "position": [
+        880,
+        300
+      ],
+      "notes": "true -> execute the next batch. false -> every batch done; proceed to merge()."
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== SW-008 build-request() — render the CURRENT batch into a PR-001 chat request =====\n// Reads the item on the wire (loop state rides the item — Guidelines §3.6). No history lookup.\nconst st = $json._bx;\nconst batch = st.batches[st.cursor];\n\nconst prow = $('Load PR-001 + LLM Settings').first().json;\nconst s = prow.settings || {};\nconst sys = prow.system_prompt || '';\n\n// --- renderBatch(): planner's companion renderer (kept with the planner block in plan(),\n// duplicated here verbatim so this node is self-contained; identical output).\nfunction renderBatch(b) {\n  const lines = [];\n  if (b.headingBreadcrumb) {\n    lines.push('--- REFERENCE CONTEXT (for interpretation only; do NOT extract from this section) ---');\n    lines.push('Current section: ' + b.headingBreadcrumb);\n    lines.push('--- END REFERENCE CONTEXT ---');\n    lines.push('');\n  }\n  lines.push('--- DOCUMENT EXCERPT (extract from this section only) ---');\n  let lastPage = null;\n  for (const p of b.paragraphs) {\n    if (p.page != null && p.page !== lastPage) { lines.push('=== PAGE ' + p.page + ' ==='); lastPage = p.page; }\n    const loc = (p.page != null) ? ('p' + p.page + ':para' + p.index) : ('para' + p.index);\n    const part = (p.partsTotal && p.partsTotal > 1) ? (' part ' + p.part + '/' + p.partsTotal) : '';\n    const role = p.role ? (' (' + p.role + ')') : '';\n    lines.push('[' + loc + part + ']' + role + ' ' + p.text);\n  }\n  lines.push('--- END DOCUMENT EXCERPT ---');\n  return lines.join('\\n');\n}\n\nconst excerpt = renderBatch(batch);\n// PR-001 is UNCHANGED. The {{ocr}} placeholder now receives one batch instead of the whole\n// document — same contract, same locators, smaller window.\nconst usr = (prow.user_prompt || '').replace('{{ocr}}', excerpt);\n\nconsole.log('[SW-008 batch ' + batch.index + '/' + st.batches.length + '] '\n  + JSON.stringify({ paragraphs: batch.paragraphs.length, newParagraphs: batch.newParagraphs,\n      range: batch.firstParagraph + '-' + batch.lastParagraph,\n      estTokens: batch.estimatedTokens, promptChars: usr.length,\n      breadcrumb: batch.headingBreadcrumb }));\n\n// NOTE: the OpenAI (HTTP Request) node REPLACES the item and DROPS everything here\n// (Engineering Guidelines §3.5). collect() therefore restores _bx by NODE REFERENCE from\n// THIS node — not from the item chain. _batchMarker lets collect() verify it restored the\n// state for the batch it actually sent, rather than silently processing the wrong one.\nreturn [{ json: { ...$json,\n  _model: s.model,\n  _temp:  s.temperature ?? 0,\n  _max:   Number(st.reservedOutputTokens) || 4096,\n  _batchMarker: batch.index,\n  messages: [ ...(sys ? [{ role: 'system', content: sys }] : []), { role: 'user', content: usr } ]\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "id": "build",
+      "name": "build-request() — Render Batch",
+      "position": [
+        1080,
+        220
+      ],
+      "notes": "Renders ONE batch. PR-001 is unchanged — its {{ocr}} placeholder receives a batch excerpt instead of the whole document. The heading breadcrumb is fenced as reference context so the model does not extract from it. maxTokens = reservedOutputTokens (the budget the planner reserved). Emits _batchMarker so collect() can verify the state it restores by node reference matches the batch actually sent (the HTTP node drops the item — §3.5)."
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI Chat Completions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json._model, temperature: $json._temp, max_tokens: $json._max, response_format: { type: 'json_object' }, messages: $json.messages }) }}",
+        "options": {
+          "timeout": 45000,
+          "retry": {
+            "retry": {
+              "maxRetries": 3
+            }
+          }
+        }
+      },
+      "notes": "Credentialed OpenAI call. Swap provider by editing this node only (§360)."
+    },
+    {
+      "parameters": {
+        "jsCode": "/* ===========================================================================\n * BATCH MERGE — mergeKnowledgeUnits()\n * ---------------------------------------------------------------------------\n * SW-008-SPECIFIC. Unlike the planner, this IS coupled to knowledge-unit semantics\n * (statement / category / authoritySource / sourcePage / sourceParagraph), so it\n * deliberately stays inside SW-008 and is NOT a candidate for extraction.\n *\n * PROBLEM\n *   Batches overlap by N paragraphs, so the same statement is legitimately extracted\n *   more than once. Restated requirements (exec summary vs normative body) also produce\n *   lexical duplicates across distant batches.\n *\n * POLICY (Architecture Owner approved)\n *   De-duplicate on normalized statement text, and when duplicates exist select the\n *   occurrence with the strongest EVIDENCE QUALITY — not the first by document order.\n *   \"First wins\" is arbitrary: in a document with an executive summary, the first\n *   occurrence is often the LOOSEST paraphrase, while the precise normative statement\n *   appears later. Ranking by evidence quality selects the better instance.\n *\n * RANKING (in order; first discriminator wins)\n *   1. non-null authoritySource      — a unit that cites its authority is strictly\n *                                      more useful for compliance than one that does not\n *   2. specific category over 'Other'— 'Other' is the model's fallback\n *   3. non-null sourcePage           — matters for PDFs; for DOCX all pages are null,\n *                                      so this tie-breaks to nothing and falls through\n *   4. body text over header/footer  — a requirement restated in a running header is\n *                                      not the authoritative instance\n *   5. lowest sourceParagraph        — DETERMINISTIC final tie-break (reproducibility)\n *\n * CONFLICT LOGGING (observability only — no schema change, no review queue)\n *   When two occurrences of the same statement disagree on category or authoritySource,\n *   the conflict is recorded so the ranking's choices are auditable. This is a real\n *   information loss and should be visible, not silent.\n * =========================================================================== */\n\nconst CATEGORY_FALLBACK = 'Other';\nconst NON_BODY_ROLES = { pageHeader: 1, pageFooter: 1, footnote: 1 };\n\nfunction normalizeStatement(s) {\n  return String(s || '').trim().toLowerCase().replace(/\\s+/g, ' ');\n}\n\n/**\n * Score a unit's evidence quality. Higher is better. Compared field-by-field in\n * priority order rather than as a single number, so the discriminators stay explicit\n * and auditable (a weighted sum would make \"why did it pick this one\" unanswerable).\n */\nfunction qualityKey(ku, paragraphRoles) {\n  const role = paragraphRoles ? paragraphRoles[ku.sourceParagraph] : null;\n  return [\n    ku.authoritySource ? 1 : 0,                                   // 1. cites authority\n    (ku.category && ku.category !== CATEGORY_FALLBACK) ? 1 : 0,   // 2. specific category\n    (ku.sourcePage != null) ? 1 : 0,                              // 3. has a page\n    (role && NON_BODY_ROLES[role]) ? 0 : 1,                       // 4. body text\n  ];\n}\n\n/** Lexicographic compare of quality keys. Returns >0 if a is better than b. */\nfunction compareQuality(a, b) {\n  for (let i = 0; i < a.length; i++) {\n    if (a[i] !== b[i]) return a[i] - b[i];\n  }\n  return 0;\n}\n\n/**\n * @param batchResults [{ batchIndex, knowledgeUnits: [...] }]\n * @param paragraphRoles { [paragraphIndex]: role }  — from ocr.paragraphs, for rule 4\n * @returns { knowledgeUnits, conflicts, stats }\n */\nfunction mergeKnowledgeUnits(batchResults, paragraphRoles) {\n  const byStatement = new Map();     // normalized statement -> { ku, batchIndex, key }\n  const conflicts = [];\n  const stats = {\n    totalExtracted: 0,\n    unique: 0,\n    duplicatesDropped: 0,\n    conflictsDetected: 0,\n    replacedByBetterEvidence: 0,\n  };\n\n  for (const batch of (batchResults || [])) {\n    for (const ku of (batch.knowledgeUnits || [])) {\n      const statement = String(ku.statement || '').trim();\n      if (!statement) continue;                 // SW-011 would reject it anyway\n      stats.totalExtracted++;\n\n      const key = normalizeStatement(statement);\n      const incomingQ = qualityKey(ku, paragraphRoles);\n      const existing = byStatement.get(key);\n\n      if (!existing) {\n        byStatement.set(key, { ku, batchIndex: batch.batchIndex, quality: incomingQ });\n        continue;\n      }\n\n      // --- duplicate found ---\n      stats.duplicatesDropped++;\n\n      // Record disagreement BEFORE choosing, so the log reflects what was actually in conflict.\n      const catDiff  = (existing.ku.category || null) !== (ku.category || null);\n      const authDiff = (existing.ku.authoritySource || null) !== (ku.authoritySource || null);\n      if (catDiff || authDiff) {\n        stats.conflictsDetected++;\n        conflicts.push({\n          statement: statement.slice(0, 160),\n          occurrences: [\n            { batchIndex: existing.batchIndex, category: existing.ku.category || null,\n              authoritySource: existing.ku.authoritySource || null,\n              sourceParagraph: existing.ku.sourceParagraph ?? null },\n            { batchIndex: batch.batchIndex, category: ku.category || null,\n              authoritySource: ku.authoritySource || null,\n              sourceParagraph: ku.sourceParagraph ?? null },\n          ],\n          conflictOn: [catDiff ? 'category' : null, authDiff ? 'authoritySource' : null].filter(Boolean),\n        });\n      }\n\n      const cmp = compareQuality(incomingQ, existing.quality);\n      let takeIncoming;\n      if (cmp > 0) {\n        takeIncoming = true;                    // strictly better evidence\n      } else if (cmp < 0) {\n        takeIncoming = false;\n      } else {\n        // 5. deterministic final tie-break: lowest sourceParagraph.\n        const a = ku.sourceParagraph ?? Number.MAX_SAFE_INTEGER;\n        const b = existing.ku.sourceParagraph ?? Number.MAX_SAFE_INTEGER;\n        takeIncoming = a < b;\n      }\n\n      if (takeIncoming) {\n        if (cmp > 0) stats.replacedByBetterEvidence++;\n        byStatement.set(key, { ku, batchIndex: batch.batchIndex, quality: incomingQ });\n      }\n    }\n  }\n\n  // Emit in document order (by sourceParagraph) — stable, readable, and matches the\n  // order a reviewer would expect when auditing the repository.\n  const knowledgeUnits = Array.from(byStatement.values())\n    .map((e) => e.ku)\n    .sort((a, b) => (a.sourceParagraph ?? 0) - (b.sourceParagraph ?? 0));\n\n  stats.unique = knowledgeUnits.length;\n  // Record the conflict count for the merge decision, then attach conflicts for logging.\n  return { knowledgeUnits, conflicts, stats };\n}\n\n/* ===========================================================================\n * BATCH RESULT VALIDATION — validateBatchUnits()\n * ---------------------------------------------------------------------------\n * Rejects hallucinated locators. A knowledge unit whose sourceParagraph does not\n * exist in the batch it came from was not grounded in the text we sent — it is a\n * fabrication, and admitting it would silently corrupt evidence traceability.\n *\n * This check does not exist in the single-call design and is a strict improvement:\n * batching makes the grounding set small and explicit, so we can actually verify it.\n * =========================================================================== */\nfunction validateBatchUnits(units, batch) {\n  const allowed = new Set(batch.paragraphs.map((p) => p.index));\n  const accepted = [];\n  const rejected = [];\n\n  for (const ku of (units || [])) {\n    const stmt = String(ku.statement || '').trim();\n    if (!stmt) { rejected.push({ ku, reason: 'empty statement' }); continue; }\n\n    const sp = ku.sourceParagraph;\n    if (sp == null) {\n      // PR-001 asks for a locator. A missing one is not fatal (SW-011 tolerates null),\n      // but it is worth surfacing — it means the unit cannot be traced to a paragraph.\n      accepted.push({ ...ku, _locatorMissing: true });\n      continue;\n    }\n    if (!allowed.has(Number(sp))) {\n      rejected.push({\n        ku,\n        reason: 'hallucinated locator: sourceParagraph ' + sp +\n                ' is not in batch ' + batch.index +\n                ' (paragraphs ' + batch.firstParagraph + '-' + batch.lastParagraph + ')',\n      });\n      continue;\n    }\n    accepted.push(ku);\n  }\n  return { accepted, rejected };\n}\n\n// ===== SW-008 collect() — validate this batch, ACCUMULATE onto the item, advance =====\n//\n// STATE RESTORATION (Engineering Guidelines §3.5).\n// The OpenAI node is an HTTP Request node: it REPLACES the item and drops everything we put\n// on it. The item arriving here is ONLY the API response ({ id, choices, usage, ... }) —\n// $json._bx does NOT exist. So we restore loop state by NODE REFERENCE from build-request(),\n// the last node before the HTTP call that carried it.\n//\n// This reads the CURRENT run of an upstream node, which is reliable (SW-005's poll-eval does\n// exactly this across its own HTTP node). It is NOT the same as reconstructing EARLIER runs\n// of a loop node, which §3.6 establishes as unreliable on n8n 2.29.9. Current run: fine.\n// Past runs: not available. collect() only needs the current one.\nconst req = $('build-request() — Render Batch').first().json;\nif (!req || !req._bx) {\n  throw new Error('SW-008 collect(): could not restore loop state from build-request(). '\n    + 'The HTTP node drops the item (§3.5) and the node reference did not resolve.');\n}\nconst st = { ...req._bx };\nconst batch = st.batches[st.cursor];\nif (!batch) {\n  throw new Error('SW-008 collect(): restored cursor ' + st.cursor\n    + ' has no batch (total ' + st.batches.length + ').');\n}\n// Verify we restored the state for the batch that was ACTUALLY sent. If the node reference\n// ever resolved to a different iteration, fail loudly rather than attribute this response to\n// the wrong batch (which would corrupt locator validation and the merge).\nif (req._batchMarker != null && Number(req._batchMarker) !== Number(batch.index)) {\n  throw new Error('SW-008 collect(): state/response mismatch — restored batch '\n    + batch.index + ' but the request was for batch ' + req._batchMarker + '.');\n}\n\nconst res  = $json;                      // the API response (item was replaced)\nconst body = res.body || res;            // fullResponse -> .body; otherwise the item IS the body\nconst httpStatus = res.statusCode;\n\n// --- 429 / transient: back off and RETRY THIS BATCH (do not advance the cursor).\nif (httpStatus === 429 || (httpStatus >= 500 && httpStatus < 600)) {\n  const attempts = Number(st.retryAttempts || 0) + 1;\n  if (attempts > 5) {\n    throw new Error('SW-008: batch ' + batch.index + ' failed after 5 retries (HTTP ' + httpStatus + ').');\n  }\n  const backoffMs = Math.min(60000, 2000 * Math.pow(2, attempts - 1));\n  console.log('[SW-008 batch ' + batch.index + '] HTTP ' + httpStatus\n    + ' -> retry ' + attempts + '/5 after ' + backoffMs + 'ms');\n  // Rebuild the item from the trigger + restored state (the HTTP node dropped both).\n  const incomingR = $('When Executed by WF-001').first().json;\n  return [{ json: { ...incomingR,\n    _bx: { ...st, retryAttempts: attempts, pacingMs: backoffMs } } }];\n}\nif (httpStatus && httpStatus >= 400) {\n  throw new Error('SW-008: batch ' + batch.index + ' HTTP ' + httpStatus + ': '\n    + JSON.stringify(body).slice(0, 300));\n}\n\n// --- parse the model's JSON output\nconst content = (((body.choices || [])[0] || {}).message || {}).content || '';\nlet parsed;\ntry {\n  parsed = JSON.parse(String(content).replace(/^```(?:json)?|```$/gm, '').trim());\n} catch (e) {\n  throw new Error('SW-008: batch ' + batch.index + ' returned unparseable JSON: '\n    + String(content).slice(0, 200));\n}\nconst rawUnits = Array.isArray(parsed) ? parsed : (parsed.knowledgeUnits || []);\n\n// --- reject hallucinated locators (units citing paragraphs not in THIS batch)\nconst v = validateBatchUnits(rawUnits, batch);\nif (v.rejected.length) {\n  console.log('[SW-008 batch ' + batch.index + '] rejected ' + v.rejected.length\n    + ' unit(s) with ungrounded locators: '\n    + JSON.stringify(v.rejected.slice(0, 3).map(r => r.reason)));\n}\nconsole.log('[SW-008 batch ' + batch.index + '/' + st.batches.length + '] extracted '\n  + v.accepted.length + ' unit(s), rejected ' + v.rejected.length\n  + ' | tokens used: ' + JSON.stringify((body.usage || {})));\n\n// --- ACCUMULATE on the item and advance the cursor\nst.results  = [...st.results, { batchIndex: batch.index, knowledgeUnits: v.accepted }];\nst.rejected = [...st.rejected, ...v.rejected.map(r => ({ batchIndex: batch.index, reason: r.reason }))];\nst.cursor   = st.cursor + 1;\nst.retryAttempts = 0;\n\n// --- PACING, computed from ACTUAL token spend (not an a-priori estimate) ---\n// Constraint: keep the rolling 60s token spend under tpmBudget.\n// After spending `used` tokens, we must wait  used / (tpmBudget/60s)  before the next call.\n// HARD CAP at 55s: an n8n Wait over ~65s is offloaded to the DB, which is unsupported under\n// Queue Mode + filesystem binary storage. Capping keeps the sleep in-memory.\n// Skip the wait entirely after the FINAL batch — nothing follows it.\nconst prow = $('Load PR-001 + LLM Settings').first().json;\nconst s = prow.settings || {};\nconst tpmBudget = Number(s.tpmBudget ?? 30000);\nconst WAIT_CAP_MS = Number(s.maxPacingMs ?? 55000);\n\nconst usage = body.usage || {};\nconst used = Number(usage.total_tokens\n  || ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0))\n  || (batch.estimatedTokens + Number(st.reservedOutputTokens || 0)));   // fallback: our estimate\n\nconst isLastBatch = st.cursor >= st.batches.length;\nlet pacingMs;\nif (isLastBatch) {\n  pacingMs = 0;\n} else if (s.batchPacingMs != null) {\n  pacingMs = Number(s.batchPacingMs);                    // explicit override wins\n} else {\n  pacingMs = Math.ceil((used / tpmBudget) * 60000);      // proportional to what we actually spent\n}\npacingMs = Math.min(pacingMs, WAIT_CAP_MS);\nst.pacingMs = Math.max(0, pacingMs);\n\nif (!isLastBatch) {\n  console.log('[SW-008 batch ' + batch.index + '] tokens used=' + used\n    + ' -> pacing ' + st.pacingMs + 'ms (cap ' + WAIT_CAP_MS + 'ms)');\n}\n\n// Rebuild the item for the next loop pass. $json here is the API RESPONSE, not our item —\n// so we reconstruct from the trigger payload plus the restored/advanced state. This also\n// means no request scaffolding (messages/_model/_max) or HTTP fields ride the loop.\nconst incoming = $('When Executed by WF-001').first().json;\nreturn [{ json: { ...incoming, _bx: st } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "id": "collect",
+      "name": "collect() — Validate + Accumulate",
+      "position": [
+        1480,
+        220
+      ],
+      "notes": "Restores loop state by NODE REFERENCE from build-request() — the OpenAI HTTP node REPLACES the item and drops _bx (§3.5). Verifies _batchMarker so a mis-resolved reference fails loudly instead of attributing a response to the wrong batch. Rebuilds the item from the trigger. Validates locators, accumulates results, advances the cursor. 429/5xx -> backoff, retry the SAME batch. Pacing from actual usage.total_tokens, capped at 55s, 0 after the final batch."
+    },
+    {
+      "parameters": {
+        "amount": "={{ Math.max(0, ($json._bx.pacingMs || 0) / 1000) }}",
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "id": "pace",
+      "name": "pace() — TPM Throttle",
+      "position": [
+        1680,
+        220
+      ],
+      "webhookId": "a7520894-acdd-4087-94e7-ef866f82f106",
+      "notes": "Throttles to keep the rolling 60s token spend under tpmBudget. Duration is set by collect() from ACTUAL token usage, capped at 55s to stay under n8n's ~65s DB-offload threshold (unsupported with Queue Mode + filesystem binary), and 0 after the final batch."
+    },
+    {
+      "parameters": {
+        "jsCode": "/* ===========================================================================\n * BATCH MERGE — mergeKnowledgeUnits()\n * ---------------------------------------------------------------------------\n * SW-008-SPECIFIC. Unlike the planner, this IS coupled to knowledge-unit semantics\n * (statement / category / authoritySource / sourcePage / sourceParagraph), so it\n * deliberately stays inside SW-008 and is NOT a candidate for extraction.\n *\n * PROBLEM\n *   Batches overlap by N paragraphs, so the same statement is legitimately extracted\n *   more than once. Restated requirements (exec summary vs normative body) also produce\n *   lexical duplicates across distant batches.\n *\n * POLICY (Architecture Owner approved)\n *   De-duplicate on normalized statement text, and when duplicates exist select the\n *   occurrence with the strongest EVIDENCE QUALITY — not the first by document order.\n *   \"First wins\" is arbitrary: in a document with an executive summary, the first\n *   occurrence is often the LOOSEST paraphrase, while the precise normative statement\n *   appears later. Ranking by evidence quality selects the better instance.\n *\n * RANKING (in order; first discriminator wins)\n *   1. non-null authoritySource      — a unit that cites its authority is strictly\n *                                      more useful for compliance than one that does not\n *   2. specific category over 'Other'— 'Other' is the model's fallback\n *   3. non-null sourcePage           — matters for PDFs; for DOCX all pages are null,\n *                                      so this tie-breaks to nothing and falls through\n *   4. body text over header/footer  — a requirement restated in a running header is\n *                                      not the authoritative instance\n *   5. lowest sourceParagraph        — DETERMINISTIC final tie-break (reproducibility)\n *\n * CONFLICT LOGGING (observability only — no schema change, no review queue)\n *   When two occurrences of the same statement disagree on category or authoritySource,\n *   the conflict is recorded so the ranking's choices are auditable. This is a real\n *   information loss and should be visible, not silent.\n * =========================================================================== */\n\nconst CATEGORY_FALLBACK = 'Other';\nconst NON_BODY_ROLES = { pageHeader: 1, pageFooter: 1, footnote: 1 };\n\nfunction normalizeStatement(s) {\n  return String(s || '').trim().toLowerCase().replace(/\\s+/g, ' ');\n}\n\n/**\n * Score a unit's evidence quality. Higher is better. Compared field-by-field in\n * priority order rather than as a single number, so the discriminators stay explicit\n * and auditable (a weighted sum would make \"why did it pick this one\" unanswerable).\n */\nfunction qualityKey(ku, paragraphRoles) {\n  const role = paragraphRoles ? paragraphRoles[ku.sourceParagraph] : null;\n  return [\n    ku.authoritySource ? 1 : 0,                                   // 1. cites authority\n    (ku.category && ku.category !== CATEGORY_FALLBACK) ? 1 : 0,   // 2. specific category\n    (ku.sourcePage != null) ? 1 : 0,                              // 3. has a page\n    (role && NON_BODY_ROLES[role]) ? 0 : 1,                       // 4. body text\n  ];\n}\n\n/** Lexicographic compare of quality keys. Returns >0 if a is better than b. */\nfunction compareQuality(a, b) {\n  for (let i = 0; i < a.length; i++) {\n    if (a[i] !== b[i]) return a[i] - b[i];\n  }\n  return 0;\n}\n\n/**\n * @param batchResults [{ batchIndex, knowledgeUnits: [...] }]\n * @param paragraphRoles { [paragraphIndex]: role }  — from ocr.paragraphs, for rule 4\n * @returns { knowledgeUnits, conflicts, stats }\n */\nfunction mergeKnowledgeUnits(batchResults, paragraphRoles) {\n  const byStatement = new Map();     // normalized statement -> { ku, batchIndex, key }\n  const conflicts = [];\n  const stats = {\n    totalExtracted: 0,\n    unique: 0,\n    duplicatesDropped: 0,\n    conflictsDetected: 0,\n    replacedByBetterEvidence: 0,\n  };\n\n  for (const batch of (batchResults || [])) {\n    for (const ku of (batch.knowledgeUnits || [])) {\n      const statement = String(ku.statement || '').trim();\n      if (!statement) continue;                 // SW-011 would reject it anyway\n      stats.totalExtracted++;\n\n      const key = normalizeStatement(statement);\n      const incomingQ = qualityKey(ku, paragraphRoles);\n      const existing = byStatement.get(key);\n\n      if (!existing) {\n        byStatement.set(key, { ku, batchIndex: batch.batchIndex, quality: incomingQ });\n        continue;\n      }\n\n      // --- duplicate found ---\n      stats.duplicatesDropped++;\n\n      // Record disagreement BEFORE choosing, so the log reflects what was actually in conflict.\n      const catDiff  = (existing.ku.category || null) !== (ku.category || null);\n      const authDiff = (existing.ku.authoritySource || null) !== (ku.authoritySource || null);\n      if (catDiff || authDiff) {\n        stats.conflictsDetected++;\n        conflicts.push({\n          statement: statement.slice(0, 160),\n          occurrences: [\n            { batchIndex: existing.batchIndex, category: existing.ku.category || null,\n              authoritySource: existing.ku.authoritySource || null,\n              sourceParagraph: existing.ku.sourceParagraph ?? null },\n            { batchIndex: batch.batchIndex, category: ku.category || null,\n              authoritySource: ku.authoritySource || null,\n              sourceParagraph: ku.sourceParagraph ?? null },\n          ],\n          conflictOn: [catDiff ? 'category' : null, authDiff ? 'authoritySource' : null].filter(Boolean),\n        });\n      }\n\n      const cmp = compareQuality(incomingQ, existing.quality);\n      let takeIncoming;\n      if (cmp > 0) {\n        takeIncoming = true;                    // strictly better evidence\n      } else if (cmp < 0) {\n        takeIncoming = false;\n      } else {\n        // 5. deterministic final tie-break: lowest sourceParagraph.\n        const a = ku.sourceParagraph ?? Number.MAX_SAFE_INTEGER;\n        const b = existing.ku.sourceParagraph ?? Number.MAX_SAFE_INTEGER;\n        takeIncoming = a < b;\n      }\n\n      if (takeIncoming) {\n        if (cmp > 0) stats.replacedByBetterEvidence++;\n        byStatement.set(key, { ku, batchIndex: batch.batchIndex, quality: incomingQ });\n      }\n    }\n  }\n\n  // Emit in document order (by sourceParagraph) — stable, readable, and matches the\n  // order a reviewer would expect when auditing the repository.\n  const knowledgeUnits = Array.from(byStatement.values())\n    .map((e) => e.ku)\n    .sort((a, b) => (a.sourceParagraph ?? 0) - (b.sourceParagraph ?? 0));\n\n  stats.unique = knowledgeUnits.length;\n  // Record the conflict count for the merge decision, then attach conflicts for logging.\n  return { knowledgeUnits, conflicts, stats };\n}\n\n/* ===========================================================================\n * BATCH RESULT VALIDATION — validateBatchUnits()\n * ---------------------------------------------------------------------------\n * Rejects hallucinated locators. A knowledge unit whose sourceParagraph does not\n * exist in the batch it came from was not grounded in the text we sent — it is a\n * fabrication, and admitting it would silently corrupt evidence traceability.\n *\n * This check does not exist in the single-call design and is a strict improvement:\n * batching makes the grounding set small and explicit, so we can actually verify it.\n * =========================================================================== */\nfunction validateBatchUnits(units, batch) {\n  const allowed = new Set(batch.paragraphs.map((p) => p.index));\n  const accepted = [];\n  const rejected = [];\n\n  for (const ku of (units || [])) {\n    const stmt = String(ku.statement || '').trim();\n    if (!stmt) { rejected.push({ ku, reason: 'empty statement' }); continue; }\n\n    const sp = ku.sourceParagraph;\n    if (sp == null) {\n      // PR-001 asks for a locator. A missing one is not fatal (SW-011 tolerates null),\n      // but it is worth surfacing — it means the unit cannot be traced to a paragraph.\n      accepted.push({ ...ku, _locatorMissing: true });\n      continue;\n    }\n    if (!allowed.has(Number(sp))) {\n      rejected.push({\n        ku,\n        reason: 'hallucinated locator: sourceParagraph ' + sp +\n                ' is not in batch ' + batch.index +\n                ' (paragraphs ' + batch.firstParagraph + '-' + batch.lastParagraph + ')',\n      });\n      continue;\n    }\n    accepted.push(ku);\n  }\n  return { accepted, rejected };\n}\n\n// ===== SW-008 merge() — dedup + evidence-quality ranking + conflict logging =====\n// The item arriving here ALREADY carries every batch result (accumulated by collect()).\n// We do NOT reconstruct history from the OpenAI node's runs — that is unreliable (§3.6).\nconst incoming = $('When Executed by WF-001').first().json;\nconst st = $json._bx;\n\nconst m = mergeKnowledgeUnits(st.results, st.paragraphRoles);\n\n// Conflicts are OBSERVABILITY ONLY this iteration (no schema change, no review queue).\nif (m.conflicts.length) {\n  console.log('[SW-008 merge] ' + m.conflicts.length + ' conflict(s) — same statement, differing '\n    + 'category/authoritySource. Ranking selected by evidence quality:');\n  for (const c of m.conflicts.slice(0, 10)) {\n    console.log('  conflict on [' + c.conflictOn.join(',') + '] :: \"'\n      + c.statement.slice(0, 90) + '\" :: ' + JSON.stringify(c.occurrences));\n  }\n  if (m.conflicts.length > 10) console.log('  ... and ' + (m.conflicts.length - 10) + ' more');\n}\n\nconsole.log('[SW-008 merge] ' + JSON.stringify({\n  batches: st.results.length,\n  totalExtracted: m.stats.totalExtracted,\n  unique: m.stats.unique,\n  duplicatesDropped: m.stats.duplicatesDropped,\n  replacedByBetterEvidence: m.stats.replacedByBetterEvidence,\n  conflictsDetected: m.stats.conflictsDetected,\n  ungroundedRejected: st.rejected.length,\n  paragraphsCovered: st.planStats.totalParagraphs,\n}));\n\n// ---- EMIT THE EXACT CONTRACT SW-009 ALREADY CONSUMES ----\n// { ...incoming, knowledge: { knowledgeUnits: [...] } }\n// Batching is INVISIBLE outside this workflow. No downstream change, no schema change.\nreturn [{ json: { ...incoming,\n  knowledge: { knowledgeUnits: m.knowledgeUnits },\n  _extraction: {                       // observability only; not consumed downstream\n    batches: st.results.length,\n    stats: m.stats,\n    conflicts: m.conflicts,\n    ungroundedRejected: st.rejected,\n  } }}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "id": "shape",
+      "name": "merge() — Dedup + Rank",
+      "position": [
+        1080,
+        420
+      ],
+      "notes": "Merges all batch outputs. Dedup on normalized statement; when duplicates exist the occurrence with the strongest EVIDENCE QUALITY wins (authoritySource > specific category > sourcePage > body text > lowest paragraph as deterministic tie-break) — NOT first-by-document-order, which would prefer a vague exec-summary paraphrase over the normative statement. Conflicts are logged for observability only. Emits { knowledge: { knowledgeUnits } } — the exact contract SW-009 already consumes. No schema change."
+    }
+  ],
+  "connections": {
+    "When Executed by WF-001": {
+      "main": [
+        [
+          {
+            "node": "Load PR-001 + LLM Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load PR-001 + LLM Settings": {
+      "main": [
+        [
+          {
+            "node": "plan() — Batch Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "plan() — Batch Plan": {
+      "main": [
+        [
+          {
+            "node": "more batches?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "more batches?": {
+      "main": [
+        [
+          {
+            "node": "build-request() — Render Batch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "merge() — Dedup + Rank",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "build-request() — Render Batch": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Chat Completions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Completions": {
+      "main": [
+        [
+          {
+            "node": "collect() — Validate + Accumulate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "collect() — Validate + Accumulate": {
+      "main": [
+        [
+          {
+            "node": "pace() — TPM Throttle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "pace() — TPM Throttle": {
+      "main": [
+        [
+          {
+            "node": "more batches?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "workflowVersion": "3.0.1",
+    "sw": "SW-008",
+    "canonicalFn": "sw008_knowledgeExtraction",
+    "contract": {
+      "input": "{ ocr }",
+      "output": "{ knowledge:{ knowledgeUnits:[...] } }"
+    },
+    "note": "LLM via HTTP Request node; prompt loaded from configuration.prompt_versions (never embedded).",
+    "enrichment": "output = {...incomingItem, newResult}; never discards accumulated state",
+    "jsonbFix": "settings is jsonb (object); removed JSON.parse on settings; LLM-content parse retained",
+    "triggerFix": "executeWorkflowTrigger upgraded to 1.1 inputSource=passThrough for binary passthrough",
+    "changelog": [
+      "v1.4.1: Fixed stale copy-paste reference. 'Build LLM Request' referenced $('Load PR-002 + LLM Settings') — a node that does not exist in SW-008 (its node is 'Load PR-001 + LLM Settings'). Would have thrown \"hasn't been executed\" at runtime. Reference retargeted; stale PR-002 comment corrected. No logic change.",
+      "v1.5.0: Build LLM Request no longer serializes the whole ocr object (which embeds ocr.raw = the full Azure analyzeResult). It now substitutes flattened page/paragraph-marked plain text, cutting the prompt ~25x and keeping it inside the model context. Page/paragraph markers preserved for PR-001 sourcePage/sourceParagraph. Adds maxPromptChars budget.",
+      "v1.6.0: flattenOcr prefers provider paragraphs (Azure analyzeResult.paragraphs via ocr.pages[].paragraphs), falling back to blank-line splitting only when absent. Emits document statistics {ocrPages, ocrCharacters, approxPromptTokens, truncated, paragraphSource} to the execution log and onto _docStats.",
+      "v2.0.0: consumes the normalized OCR model. flattenOcr walks ocr.paragraphs[] (universal unit) instead of ocr.pages[].text (which collapsed DOCX to one page and discarded the document). Locators are [pN:paraM] for paginated formats and [paraM] for DOCX. Stats now include ocrParagraphs, sourceFormat and pagination.",
+      "v3.0.0: BATCHED EXTRACTION. Replaces the single truncated LLM call (maxPromptChars=360000, which silently discarded ~2/3 of large documents) with a token-budgeted batch loop: plan() -> [more batches? -> build-request() -> OpenAI -> collect() -> pace()] -> merge(). Batch results ACCUMULATE ON THE ITEM (Guidelines §3.6 — run history is not reconstructible downstream). Per-batch locator validation rejects hallucinated sourceParagraph values. Merge dedups on normalized statement and ranks by EVIDENCE QUALITY, not document order. Conflicts logged (observability only). PR-001 UNCHANGED. Emits { knowledge: { knowledgeUnits } } — the exact contract SW-009 consumes. NO schema change, NO downstream change, NO WF-001 change.",
+      "v3.0.0 (pacing correction): pacing is derived from ACTUAL usage.total_tokens in collect(), not from an a-priori per-batch estimate in plan(). The estimate produced a fixed ~46s wait per batch — close to n8n's ~65s Wait threshold above which execution is offloaded to the DB (unsupported under Queue Mode + filesystem binary) — and it also waited after the final batch for no reason. Now: wait proportional to tokens actually spent, HARD-CAPPED at 55s, and skipped entirely after the last batch.",
+      "v3.0.1: FIX — collect() read $json._bx, but the OpenAI HTTP Request node REPLACES the item and drops it (Engineering Guidelines §3.5, which this code violated). The item reaching collect() is only the API response, so _bx was undefined and st.batches[st.cursor] threw. collect() now restores loop state by node reference from build-request() (the last node before the HTTP call that carries it) and rebuilds the item from the trigger. build-request() stamps _batchMarker so collect() verifies it restored state for the batch actually sent. Reading the CURRENT run of an upstream node is reliable; this is distinct from reconstructing EARLIER loop runs, which §3.6 establishes as unreliable."
+    ]
+  }
+}

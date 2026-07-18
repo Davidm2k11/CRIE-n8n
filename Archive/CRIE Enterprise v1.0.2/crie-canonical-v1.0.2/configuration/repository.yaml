@@ -1,0 +1,10 @@
+# repository.yaml — Repository configuration (authored source of truth, R-08). §307
+repository:
+  repositoryVersion: 1
+  certificationRequired: true          # §428 certification
+  automaticArchiving: false
+  allowReprocessing: false
+  transactionTimeout: 300              # seconds; Repository Writer is transactional (§234)
+  database: postgres                   # Supabase PostgreSQL
+  schema: repository
+  storageBucket: crie-repository

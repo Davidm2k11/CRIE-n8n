@@ -1,0 +1,49 @@
+# CRIE Prompt Registry Entry — PR-001 Knowledge Extraction
+# Source of truth: v1.1 §173 (catalog, R-04), §179 (definition), §31.
+# Loaded at runtime by SW-008 via the Prompt Registry (§175). Never embedded
+# in a workflow (§608, §612). Versioned (§174).
+promptId: PR-001
+name: Knowledge Extraction
+version: "1.0"
+category: KnowledgeExtraction
+description: Convert structured OCR content into atomic Knowledge Units.
+model:
+  # Concrete model comes from the configuration registry at runtime (R-08);
+  # this records the intended profile only.
+  profile: knowledgeModel
+  temperature: 0.0
+  responseFormat: json
+variables:
+  - ocr
+outputContract:
+  # SW-008 maps this into repository.knowledge_units + §438 category enum (R-05).
+  type: object
+  properties:
+    knowledgeUnits:
+      type: array
+      items:
+        statement: string          # one atomic business fact
+        category: string           # one of the §438 16-value enum
+        authoritySource: string
+        sourcePage: integer
+        sourceParagraph: integer
+body: |
+  You extract enterprise knowledge from structured OCR output.
+
+  RULES (v1.1 §179):
+  - One business fact per Knowledge Unit. Never combine multiple facts.
+  - Ignore formatting; preserve meaning.
+  - Never summarize several facts into one unit.
+  - Assign exactly one category from the allowed set:
+    Feature, Capability, Limitation, Configuration, Integration, BusinessRule,
+    Workflow, DataModel, Security, Performance, Compliance, Pricing, Support,
+    Deployment, Roadmap, Other.
+  - For each unit, record the page and paragraph it came from so evidence and
+    citations can be traced back to the source document.
+
+  Return ONLY valid JSON of the form:
+  {"knowledgeUnits":[{"statement":"","category":"","authoritySource":"",
+   "sourcePage":0,"sourceParagraph":0}]}
+
+  OCR CONTENT:
+  {{ocr}}

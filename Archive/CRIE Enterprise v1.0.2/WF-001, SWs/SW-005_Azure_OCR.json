@@ -1,0 +1,425 @@
+{
+  "name": "SW-005 Azure OCR",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "When Executed by WF-001",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "notes": "Input data mode = 'Accept all data'. In the exported JSON this is inputSource: 'passthrough' (LOWERCASE t — verified against a real n8n export; the camelCase 'passThrough' I previously authored is not the value n8n emits). Receives the full payload from WF-001 including binary."
+    },
+    {
+      "id": "load-ocr",
+      "name": "Load OCR Provider Settings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        460,
+        180
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT settings FROM configuration.providers WHERE kind='ocr';"
+      },
+      "notes": "Runtime endpoint/model/timeout (R-08). Bind CRIE Postgres credential."
+    },
+    {
+      "id": "reattach-binary",
+      "name": "Re-attach Binary (pattern)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Pattern:\n// If a Postgres node precedes a binary consumer,\n// restore binary from the trigger using node reference.\n//\n// Here: 'Load OCR Provider Settings' (Postgres) sits between the trigger and the Azure\n// node. Postgres replaces the item and drops item.binary, so the Azure node would not see\n// the file. We restore it from the trigger by node reference (verified working: the boundary\n// probe resolved $('When Executed by WF-001').first().binary and getBinaryDataBuffer read the\n// full file). json (the loaded OCR settings) passes through unchanged.\nreturn [{ json: $json, binary: $('When Executed by WF-001').first().binary }];"
+      },
+      "notes": "PATTERN — restore binary after a Postgres node that precedes a binary consumer. Any future SW workflow with Postgres-before-binary-consumer must apply this same re-attach-from-trigger step. See CRIE Workflow Engineering Guidelines."
+    },
+    {
+      "id": "submit",
+      "name": "submit() — POST Analyze",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Load OCR Provider Settings').first().json.settings.endpoint }}/documentintelligence/documentModels/{{ $('Load OCR Provider Settings').first().json.settings.model }}:analyze?api-version=2024-11-30",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "authentication": "genericCredentialType",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "retry": {
+            "retry": {
+              "maxRetries": 3
+            }
+          }
+        },
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "notes": "SUBMIT adapter (Azure). POST :analyze with the binary. fullResponse=true so the Operation-Location header is available. neverError=true so 202 is not treated as an error. Node-level retry handles transient 429/503 only — NOT operation progress. Auth: Generic Credential Type -> Header Auth (httpHeaderAuth). Credential must be re-bound in the n8n UI after import (n8n does not preserve credential IDs across imports).",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Azure Document Intelligence (Header Auth)"
+        }
+      }
+    },
+    {
+      "id": "submit-capture",
+      "name": "submit() — capture pollUrl",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// SUBMIT ADAPTER (provider-independent shell; Azure defaults).\n// Extracts the poll URL from the submit response using provider config, and initialises poll state.\nconst cfg  = $('Load OCR Provider Settings').first().json.settings || {};\nconst poll = cfg.poll || {};\nconst HDR  = (poll.pollUrlHeader   || 'operation-location').toLowerCase();\nconst IVAL = Number(poll.pollIntervalMs ?? 2000);   // Azure: no faster than ~2s\nconst MAXA = Number(poll.maxAttempts    ?? 90);     // budget: 90 attempts\nconst MAXMS= Number(poll.maxElapsedMs   ?? 900000); // budget: 15 min hard ceiling\n\nconst res = $json;                       // fullResponse: { statusCode, headers, body }\nconst headers = res.headers || {};\n// header lookup is case-insensitive\nlet pollUrl = null;\nfor (const k of Object.keys(headers)) { if (k.toLowerCase() === HDR) { pollUrl = headers[k]; break; } }\nconst status = res.statusCode;\n\nif (status !== 202 || !pollUrl) {\n  // Submit itself failed -> terminal failure, no polling.\n  return [{ json: {\n    _poll: { terminal: true, status: 'failed', attempt: 0, startedAt: Date.now(),\n             intervalMs: IVAL, maxAttempts: MAXA, maxElapsedMs: MAXMS,\n             error: `submit failed: HTTP ${status}` + (pollUrl ? '' : ' (no poll URL header)') },\n    _result: null\n  }}];\n}\n// Honor Retry-After from the submit response if present.\nlet firstWaitMs = IVAL;\nconst ra = headers['retry-after'] || headers['Retry-After'];\nif (ra && !isNaN(Number(ra))) firstWaitMs = Math.max(IVAL, Number(ra) * 1000);\n\nreturn [{ json: {\n  _poll: { pollUrl, terminal: false, status: 'notStarted', attempt: 0, startedAt: Date.now(),\n           waitMs: firstWaitMs, intervalMs: IVAL, maxAttempts: MAXA, maxElapsedMs: MAXMS, error: null },\n  _result: null\n}}];"
+      },
+      "notes": "Captures the poll URL (Azure: Operation-Location) using provider config (settings.poll.pollUrlHeader), honors Retry-After for the first wait, and seeds the poll budget (maxAttempts / maxElapsedMs). A non-202 or missing header is a terminal submit failure."
+    },
+    {
+      "id": "wait",
+      "name": "poll() — wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1040,
+        300
+      ],
+      "webhookId": "crie-sw005-poll-wait",
+      "parameters": {
+        "amount": "={{ Math.max(1, Math.ceil(($json._poll.waitMs || 2000) / 1000)) }}",
+        "unit": "seconds"
+      },
+      "notes": "Waits the interval computed by the poll adapter (honors Retry-After; default ~2s per Azure guidance)."
+    },
+    {
+      "id": "poll",
+      "name": "poll() — GET operation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json._poll.pollUrl }}",
+        "authentication": "genericCredentialType",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000,
+          "retry": {
+            "retry": {
+              "maxRetries": 3
+            }
+          }
+        },
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Azure Document Intelligence (Header Auth)"
+        }
+      },
+      "notes": "GET the operation URL. fullResponse for Retry-After header. Node retry = transient faults only. Auth: Generic Credential Type -> Header Auth (httpHeaderAuth). Credential must be re-bound in the n8n UI after import (n8n does not preserve credential IDs across imports)."
+    },
+    {
+      "id": "poll-eval",
+      "name": "poll() — evaluate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// POLL ADAPTER (provider-independent shell; Azure defaults).\n// Normalises the provider response to { status, result } and enforces the timeout budget.\nconst cfg  = $('Load OCR Provider Settings').first().json.settings || {};\nconst pc   = cfg.poll || {};\nconst STATUS_PATH = pc.statusPath      || 'status';\nconst SUCCESS     = pc.terminalSuccess || 'succeeded';\nconst FAILURE     = pc.terminalFailure || 'failed';\nconst RESULT_PATH = pc.resultPath      || 'analyzeResult';\n\n// carry poll state forward (the previous item is the one that entered the Wait)\nconst prev = $('submit() — capture pollUrl').first().json._poll;\nlet state = { ...prev, ...($json._poll || {}) };\n// after the first loop the state rides on the item; recover it if the HTTP node replaced the item\nif (!state.pollUrl) state = { ...prev };\n\nconst res  = $json;                       // fullResponse\nconst body = res.body || {};\nconst headers = res.headers || {};\nconst httpStatus = res.statusCode;\n\nstate.attempt = (Number(state.attempt) || 0) + 1;\nconst elapsed = Date.now() - Number(state.startedAt);\n\n// read provider status via configured path\nconst opStatus = String(STATUS_PATH.split('.').reduce((o,k)=> (o||{})[k], body) ?? '').toLowerCase();\nconst isSuccess = opStatus === String(SUCCESS).toLowerCase();\nconst isFailure = opStatus === String(FAILURE).toLowerCase();\n\n// budget exhaustion -> terminal timeout\nconst overAttempts = state.attempt >= Number(state.maxAttempts);\nconst overElapsed  = elapsed      >= Number(state.maxElapsedMs);\n\nlet result = null, terminal = false, status = opStatus || 'running', error = null;\nif (isSuccess) {\n  terminal = true; status = 'succeeded';\n  result = RESULT_PATH.split('.').reduce((o,k)=> (o||{})[k], body) ?? body;\n} else if (isFailure) {\n  terminal = true; status = 'failed';\n  error = JSON.stringify(body.error || body).slice(0, 500);\n} else if (httpStatus >= 400) {\n  terminal = true; status = 'failed';\n  error = `poll HTTP ${httpStatus}: ` + JSON.stringify(body).slice(0, 300);\n} else if (overAttempts || overElapsed) {\n  terminal = true; status = 'timeout';\n  error = `OCR poll budget exhausted after ${state.attempt} attempts / ${Math.round(elapsed/1000)}s`;\n}\n\n// next wait: honor Retry-After, else configured interval\nlet waitMs = Number(state.intervalMs) || 2000;\nconst ra = headers['retry-after'] || headers['Retry-After'];\nif (ra && !isNaN(Number(ra))) waitMs = Math.max(waitMs, Number(ra) * 1000);\nif (httpStatus === 429) waitMs = Math.max(waitMs * 2, 5000);   // backoff on throttle\nstate.waitMs = waitMs;\nstate.terminal = terminal; state.status = status; state.error = error;\nstate.httpStatus = httpStatus;\nconsole.log('[SW-005 poll] attempt=' + state.attempt + ' http=' + httpStatus\n  + ' status=' + status + ' terminal=' + terminal\n  + ' pages=' + ((result && result.pages) ? result.pages.length : 'n/a'));\n\nreturn [{ json: { _poll: state, _result: result } }];"
+      },
+      "notes": "Normalises the provider poll response to {status,result} via config (statusPath, terminalSuccess/Failure, resultPath). Honors Retry-After, backs off on 429, increments the attempt counter, and enforces maxAttempts/maxElapsedMs so the loop can never run forever."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "587f31f2-5e5d-403a-a260-1e266d915dba",
+              "leftValue": "={{ $json._poll.terminal }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "id": "if-terminal",
+      "name": "terminal?",
+      "position": [
+        1580,
+        300
+      ],
+      "notes": "true -> terminal (succeeded/failed/timeout). false -> loop back to Wait and poll again. Schema is a verbatim copy of a real n8n IF v2 export (nested parameters.conditions object); only the expression/value were substituted."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8b94b53b-3178-4808-8d5d-a97e07006a8c",
+              "leftValue": "={{ $json._poll.status }}",
+              "rightValue": "succeeded",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "id": "if-ok",
+      "name": "succeeded?",
+      "position": [
+        1760,
+        220
+      ],
+      "notes": "succeeded -> normalize(). failed/timeout -> ocr=null so WF-001's §154 OCR-fail path fires. Schema is a verbatim copy of a real n8n IF v2 export."
+    },
+    {
+      "id": "shape",
+      "name": "normalize() — Normalized OCR Model",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        160
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// ===== TEMPORARY VERIFICATION LOG — remove once confirmed. =====\n// Confirms the item on the wire IS the terminal, successful poll before we permanently rely on it.\nconsole.log({\n  status: $json._poll?.status,\n  terminal: $json._poll?.terminal,\n  hasResult: !!$json._result,\n  pages: $json._result?.pages?.length,\n  paragraphs: $json._result?.paragraphs?.length,\n});\n\n// ===========================================================================\n// TERMINAL POLL SELECTION — read the item on the wire. Do NOT reconstruct history.\n//\n// The item arriving here has already passed BOTH gates:\n//     terminal?  ($json._poll.terminal === true)\n//     succeeded? ($json._poll.status   === 'succeeded')\n// so by construction it IS the terminal, successful poll. It carries _result.\n//\n// Do not use $('poll() — evaluate').all(...) to rediscover earlier loop runs: on n8n 2.29.9\n// that reference does not expose the loop's run history to a downstream Code node (it returned\n// only the FIRST run — a stale 'running' iteration — even when the execution viewer showed a\n// later 'succeeded' run). The IF nodes already did the selection; trust the item.\n// ===========================================================================\nfunction terminalPoll() {\n  const j = $json || {};\n  const p = j._poll || {};\n  if (p.terminal !== true || p.status !== 'succeeded') {\n    // Defensive: this node is only wired to succeeded?[true]. If we ever get here with a\n    // non-terminal item, the graph is wrong — fail loudly rather than emit an empty OCR object.\n    throw new Error('SW-005 normalize(): received a non-terminal item '\n      + '(status=' + (p.status || 'unknown') + ', terminal=' + p.terminal + '). '\n      + 'normalize() must only be reached via succeeded?[true].');\n  }\n  if (j._result == null) {\n    throw new Error('SW-005 normalize(): poll reported succeeded but _result is absent.');\n  }\n  return j;\n}\n\n// ===========================================================================\n// OCR NORMALIZER — the ONE place that knows provider/format quirks.\n// Downstream (SW-006/007/008/012/013) consumes a single normalized model and\n// never needs to know whether the source was a PDF, an image, or a Word file.\n//\n//   Azure response\n//        │\n//        ▼\n//   Normalizer ──┬── PDF / image : native pagination -> page + paragraph\n//                └── DOCX        : no true pagination -> paragraph-first\n//\n// Pages are NEVER synthesized. A DOCX has no pages, so ocr.pages = [] and every\n// paragraph carries page:null. That is the honest model (R-19 portability rule).\n// ===========================================================================\nfunction detectFormat(mimeType, fileName) {\n  const mt = String(mimeType || '').toLowerCase();\n  const fn = String(fileName || '').toLowerCase();\n  if (mt.includes('pdf') || fn.endsWith('.pdf')) return 'pdf';\n  if (mt.startsWith('image/') || /\\.(png|jpe?g|tiff?|bmp|heif)$/.test(fn)) return 'image';\n  if (mt.includes('wordprocessingml') || fn.endsWith('.docx') || fn.endsWith('.doc')) return 'docx';\n  if (mt.includes('spreadsheetml') || fn.endsWith('.xlsx')) return 'xlsx';\n  if (mt.includes('presentationml') || fn.endsWith('.pptx')) return 'pptx';\n  return 'unknown';\n}\n\nfunction normalizeAzure(analyzeResult, sourceFormat, model) {\n  // Formats with true, provider-reported pagination.\n  const NATIVE_PAGINATION = { pdf: true, image: true };\n  const hasNativePages = !!NATIVE_PAGINATION[sourceFormat];\n\n  // ---- paragraphs: the PRIMARY unit. Azure returns these for BOTH pdf and docx.\n  const src = analyzeResult.paragraphs || [];\n  const paragraphs = src.map((para, i) => {\n    let page = null;\n    if (hasNativePages && para.boundingRegions && para.boundingRegions[0]) {\n      page = para.boundingRegions[0].pageNumber ?? null;   // real page, never invented\n    }\n    return {\n      index: i + 1,                       // 1-based document order (reading order)\n      text: String(para.content || '').trim(),\n      page,                               // null for docx — honest, not synthesized\n      role: para.role || null,            // title | sectionHeading | pageHeader | ...\n      offset: (para.spans && para.spans[0]) ? para.spans[0].offset : null,\n    };\n  }).filter(p => p.text);\n\n  // ---- pages: ONLY when the format actually paginates. Empty for docx.\n  let pages = [];\n  if (hasNativePages) {\n    const byPage = {};\n    for (const p of paragraphs) {\n      if (p.page == null) continue;\n      (byPage[p.page] = byPage[p.page] || []).push(p.index);\n    }\n    pages = (analyzeResult.pages || []).map(pg => ({\n      page: pg.pageNumber,\n      confidence: (pg.words && pg.words.length)\n        ? (pg.words.reduce((s, w) => s + (w.confidence || 0), 0) / pg.words.length) : 1,\n      paragraphIndexes: byPage[pg.pageNumber] || [],\n    }));\n  }\n\n  // ---- pageOf(): a bounding region's page, honest per format (null when unpaginated).\n  const pageOf = (regions) => {\n    if (!hasNativePages) return null;\n    return (regions && regions[0] && regions[0].pageNumber != null) ? regions[0].pageNumber : null;\n  };\n\n  // ---- tables: normalized structure, not just a count. Cells are kept so a future\n  //      consumer can render/reason over them without touching provider internals.\n  const tables = (analyzeResult.tables || []).map((t, i) => ({\n    index: i + 1,\n    page: pageOf(t.boundingRegions),\n    rowCount: t.rowCount ?? null,\n    columnCount: t.columnCount ?? null,\n    caption: (t.caption && t.caption.content) ? String(t.caption.content).trim() : null,\n    cells: (t.cells || []).map(c => ({\n      row: c.rowIndex, column: c.columnIndex,\n      rowSpan: c.rowSpan ?? 1, columnSpan: c.columnSpan ?? 1,\n      kind: c.kind || null,               // columnHeader | rowHeader | content | ...\n      text: String(c.content || '').trim(),\n    })),\n  }));\n\n  // ---- figures: locations + captions Azure already gives us. NOT image bytes — those\n  //      require an explicit `output=figures` request parameter we do not currently send.\n  //      Preserved now so image understanding can be added later without re-OCR.\n  const figures = (analyzeResult.figures || []).map((f, i) => ({\n    index: i + 1,\n    id: f.id || null,\n    page: pageOf(f.boundingRegions),\n    caption: (f.caption && f.caption.content) ? String(f.caption.content).trim() : null,\n    // element refs tie a figure back to the paragraphs it encloses (e.g. \"/paragraphs/12\")\n    elements: Array.isArray(f.elements) ? f.elements.slice() : [],\n    boundingRegions: f.boundingRegions || [],   // geometry retained for future cropping\n    imageAvailable: false,   // true only if the provider was asked for figure images\n  }));\n\n  const content = typeof analyzeResult.content === 'string' ? analyzeResult.content : '';\n  return {\n    provider: 'azure',\n    model: model || analyzeResult.modelId || null,\n    sourceFormat,\n    pagination: hasNativePages ? 'native' : 'none',\n    readingOrderPresent: paragraphs.length > 0,\n    paragraphs,\n    pages,\n    tables,     // normalized; [] when the document has none\n    figures,    // normalized; [] when the document has none (or provider emits none)\n    content,\n    stats: {\n      paragraphs: paragraphs.length,\n      pages: pages.length,\n      characters: content.length,\n      tables: tables.length,\n      figures: figures.length,\n      tableCells: tables.reduce((s, t) => s + t.cells.length, 0),\n      figuresWithCaption: figures.filter(f => f.caption).length,\n    },\n    raw: analyzeResult,   // for SW-009/010/011 evidence+citation. NEVER sent to an LLM.\n  };\n}\n\n// ---- normalize() ---------------------------------------------------------\nconst incoming = $('When Executed by WF-001').first().json;\nconst final = terminalPoll();               // the item on the wire — no history lookup\nconst analyzeResult = final._result || {};\n\nif (!analyzeResult.paragraphs && !analyzeResult.content) {\n  throw new Error('SW-005: provider returned no paragraphs and no content '\n    + '(status=' + ((final._poll && final._poll.status) || 'unknown') + ').');\n}\n\nconst settings = $('Load OCR Provider Settings').first().json.settings || {};\nconst sourceFormat = detectFormat(incoming.mimeType, incoming.filename);\nconst ocr = normalizeAzure(analyzeResult, sourceFormat, settings.model);\n\nconsole.log('[SW-005 normalize] ' + JSON.stringify({\n  pollAttempt:  final._poll.attempt,\n  sourceFormat: ocr.sourceFormat,\n  pagination:   ocr.pagination,\n  paragraphs:   ocr.stats.paragraphs,\n  pages:        ocr.stats.pages,\n  characters:   ocr.stats.characters,\n  tables:       ocr.stats.tables,\n  figures:      ocr.stats.figures,\n  tableCells:   ocr.stats.tableCells,\n}));\n\nreturn [{ json: { ...incoming, ocr } }];"
+      },
+      "notes": "TEMPORARY verification log at line 1 (remove once confirmed). Reads $json as the canonical input: the IF gates (terminal? + succeeded?) already proved this item is the terminal successful poll. NO $('poll() — evaluate') history lookups remain."
+    },
+    {
+      "id": "fail-out",
+      "name": "shapeResult() — OCR failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        380
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Terminal failure/timeout. Read the item on the wire (succeeded?[false] already selected it).\n// No run-history enumeration — see normalize() for why that is unreliable on n8n 2.29.9.\nconst incoming = $('When Executed by WF-001').first().json;\nconst p = ($json && $json._poll) || {};\nreturn [{ json: { ...incoming, ocr: null,\n  ocrError: { status: p.status || 'failed', attempts: p.attempt || 0,\n              message: p.error || 'OCR failed' } } }];"
+      },
+      "notes": "Emits ocr=null + ocrError so WF-001's node-if-ocr routes to the §154 HUMAN_REVIEW path. Reads the item directly; no run-history lookup."
+    }
+  ],
+  "connections": {
+    "When Executed by WF-001": {
+      "main": [
+        [
+          {
+            "node": "Load OCR Provider Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load OCR Provider Settings": {
+      "main": [
+        [
+          {
+            "node": "Re-attach Binary (pattern)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-attach Binary (pattern)": {
+      "main": [
+        [
+          {
+            "node": "submit() — POST Analyze",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "submit() — POST Analyze": {
+      "main": [
+        [
+          {
+            "node": "submit() — capture pollUrl",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "submit() — capture pollUrl": {
+      "main": [
+        [
+          {
+            "node": "poll() — wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "poll() — wait": {
+      "main": [
+        [
+          {
+            "node": "poll() — GET operation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "poll() — GET operation": {
+      "main": [
+        [
+          {
+            "node": "poll() — evaluate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "poll() — evaluate": {
+      "main": [
+        [
+          {
+            "node": "terminal?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "terminal?": {
+      "main": [
+        [
+          {
+            "node": "succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "poll() — wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "succeeded?": {
+      "main": [
+        [
+          {
+            "node": "normalize() — Normalized OCR Model",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "shapeResult() — OCR failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "workflowVersion": "3.3.1",
+    "sw": "SW-005",
+    "canonicalFn": "sw005_azureOcr",
+    "contract": {
+      "input": "binary 'data' + config.ocr",
+      "output": "{ ocr }"
+    },
+    "note": "Provider call via HTTP Request node (portable). Credentials bound at import: azureApi + CRIE Postgres.",
+    "enrichment": "output = {...incomingItem, newResult}; never discards accumulated state",
+    "jsonbFix": "settings is jsonb (object); removed JSON.parse on settings; LLM-content parse retained",
+    "triggerFix": "executeWorkflowTrigger upgraded to 1.1 inputSource=passThrough for binary passthrough",
+    "binaryReattach": "Pattern node added: Postgres-before-binary-consumer -> restore binary from trigger by node reference",
+    "lro": "Azure LRO in-workflow poll loop: submit() -> poll() (Wait+GET+evaluate, Retry-After honored, 429 backoff, attempt/elapsed budget) -> shapeResult(). Output contract unchanged.",
+    "changelog": [
+      "v2.1.0: shapeResult now carries Azure's real paragraph structure into ocr.pages[].paragraphs (with ocr.paragraphSource flag). Additive — existing contract fields unchanged.",
+      "v2.2.0: FIX — shapeResult/fail-out read the TERMINAL poll iteration via $('poll() — evaluate').all() instead of $json. In the Wait-node loop, $json could resolve to a stale iteration whose _result was null, producing ocr.pages=[] and ocr.raw={} downstream. Also throws if analyzeResult has no pages, instead of silently emitting an empty OCR object.",
+      "v2.3.0: ROOT-CAUSE FIX. $('poll() — evaluate').all() returns items of ONE run only (runIndex defaults to 0), so the previous terminalPoll() saw a single stale 'running' iteration with _result=null and fell back to it -> 'analyzeResult carried no pages (status=running)'. Now walks EVERY run index (0..runIndex) per the n8n canonical loop pattern, selects the terminal run, and throws rather than falling back to stale data. poll-eval logs each iteration.",
+      "v3.0.0: OCR NORMALIZER (Option 1, paragraph-first). Root cause of the 1-page result: DOCX has no native pagination, so Azure returns pages.length=1 with all 10,729 paragraphs in paragraphs[]; the old page-centric shaper read pages[0].lines and discarded the document. The normalizer now emits a format-aware model: paragraphs[] primary (page:null for docx, real page for pdf/image), pages[] empty for docx (never synthesized), plus content/stats/raw. Format detected from mimeType/filename.",
+      "v3.1.0: normalized contract gains tables[] and figures[]. Tables were previously COUNTED and their structure discarded (143 present in the CUBES SRS). Figures preserve id/page/caption/element-refs/geometry with imageAvailable=false; figure image bytes need an explicit output=figures request that is not currently sent. Both arrays are [] when absent. Stats gain figures/tableCells.",
+      "v3.2.0: (a) ROOT CAUSE FIX — 'terminal?' and 'succeeded?' rebuilt from a REAL n8n IF v2 export (parameters.conditions is a nested OBJECT {options, conditions[], combinator}, plus a separate top-level options:{}). The previously hand-authored FLAT shape imported with ZERO conditions, so both IF nodes evaluated vacuously TRUE and passed every non-terminal poll straight to normalize() — the loop never looped. Operators are plain 'equals' (no unary true/singleValue). typeVersion 2.2. (b) Trigger inputSource corrected to lowercase 'passthrough' (Accept all data) per real export. (c) Azure HTTP nodes switched to Generic Credential Type -> Header Auth (httpHeaderAuth); credential is re-bound manually after import.",
+      "v3.3.0: normalize() and the OCR-fail node now read the item on the wire ($json) instead of reconstructing loop history via $('poll() — evaluate').all(0,r). MEASURED on n8n 2.29.9: that reference returns only the FIRST run of a Wait-loop to a downstream Code node — execution history showed run1=running/run2=succeeded, the IF gates correctly routed run 2, yet the reference still yielded ['running'] across 1 run. The IF gates (terminal? + succeeded?) already prove the incoming item is the terminal successful poll, so no history lookup is needed. Throws if a non-terminal item reaches normalize().",
+      "v3.3.1: temporary first-line verification log in normalize() reporting the incoming item's _poll.status / _poll.terminal / _result presence / pages / paragraphs. Confirms $json is the terminal successful poll before permanently relying on it. History lookups were already removed in v3.3.0; the only remaining mention is an explanatory comment."
+    ]
+  }
+}

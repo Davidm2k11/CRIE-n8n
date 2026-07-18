@@ -1,0 +1,217 @@
+{
+  "schemaVersion": "1.1",
+  "proposalId": "PROP-0007",
+  "generatedAt": "2026-07-07T10:00:00Z",
+  "metadata": {
+    "customerName": null,
+    "tenderName": null,
+    "submissionDate": null,
+    "reviewer": "J. Reviewer"
+  },
+  "complianceMatrix": {
+    "columns": [
+      "Requirement ID",
+      "Compliance Level",
+      "Requirement",
+      "Category",
+      "Response",
+      "Supporting Evidence",
+      "Citation",
+      "Confidence",
+      "Review Required",
+      "Reviewer",
+      "Review Status"
+    ],
+    "rows": [
+      {
+        "requirementId": "REQ-001",
+        "requirement": "The system must support single sign-on via SAML 2.0.",
+        "category": "Security",
+        "complianceLevel": "Fully Compliant",
+        "response": "The platform supports SSO via SAML 2.0 as documented in the Security Configuration Guide.",
+        "supportingEvidence": "SAML 2.0 SSO documented",
+        "citation": "Security Configuration Guide p.12",
+        "confidence": 0.94,
+        "reviewRequired": false,
+        "reviewer": null,
+        "reviewStatus": "Pending"
+      },
+      {
+        "requirementId": "REQ-002",
+        "requirement": "The system must provide native SAP integration.",
+        "category": "Integration",
+        "complianceLevel": "Custom Development Required",
+        "response": "Native SAP integration is not available out of the box and requires custom development.",
+        "supportingEvidence": "Integration framework supports custom connectors",
+        "citation": "Integration Guide p.33",
+        "confidence": 0.71,
+        "reviewRequired": true,
+        "reviewer": null,
+        "reviewStatus": "Pending"
+      },
+      {
+        "requirementId": "REQ-003",
+        "requirement": "The system must offer configurable approval workflows.",
+        "category": "Workflow",
+        "complianceLevel": "Configurable",
+        "response": "Approval workflows are configurable through the workflow designer.",
+        "supportingEvidence": "Workflow designer supports approval stages",
+        "citation": "Admin Guide p.58",
+        "confidence": 0.88,
+        "reviewRequired": false,
+        "reviewer": null,
+        "reviewStatus": "Pending"
+      },
+      {
+        "requirementId": "REQ-004",
+        "requirement": "The system must comply with ISO 27001.",
+        "category": "Compliance",
+        "complianceLevel": "Insufficient Evidence",
+        "response": "No certified documentation of ISO 27001 status is available in the repository.",
+        "supportingEvidence": "",
+        "citation": "",
+        "confidence": 0.35,
+        "reviewRequired": true,
+        "reviewer": null,
+        "reviewStatus": "Pending"
+      },
+      {
+        "requirementId": "REQ-005",
+        "requirement": "The system must support role-based access control.",
+        "category": "Security",
+        "complianceLevel": "Partially Compliant",
+        "response": "RBAC is supported for core modules; fine-grained field-level control is limited.",
+        "supportingEvidence": "RBAC roles documented",
+        "citation": "Security Configuration Guide p.20",
+        "confidence": 0.66,
+        "reviewRequired": false,
+        "reviewer": null,
+        "reviewStatus": "Pending"
+      }
+    ]
+  },
+  "executiveSummary": {
+    "overallCompliancePercent": 40.0,
+    "totalRequirements": 5,
+    "fullyCompliantCount": 1,
+    "partiallyCompliantCount": 1,
+    "configurableCount": 1,
+    "customDevelopmentCount": 1,
+    "unsupportedCount": 0,
+    "insufficientEvidenceCount": 1,
+    "keyRisks": [
+      "ISO 27001 evidence missing"
+    ],
+    "recommendedNextSteps": [
+      "Certify ISO docs"
+    ]
+  },
+  "evidenceReport": {
+    "columns": [
+      "requirement",
+      "knowledgeUnit",
+      "evidence",
+      "citation",
+      "document",
+      "page",
+      "confidence"
+    ],
+    "rows": [
+      {
+        "requirement": "The system must support single sign-on via SAML 2.0.",
+        "knowledgeUnit": "KU-101",
+        "evidence": "SAML 2.0 SSO documented",
+        "citation": "Security Configuration Guide p.12",
+        "document": "Security Configuration Guide",
+        "page": 12,
+        "confidence": 0.94
+      },
+      {
+        "requirement": "The system must provide native SAP integration.",
+        "knowledgeUnit": "KU-210",
+        "evidence": "Integration framework supports custom connectors",
+        "citation": "Integration Guide p.33",
+        "document": "Integration Guide",
+        "page": 33,
+        "confidence": 0.71
+      },
+      {
+        "requirement": "The system must offer configurable approval workflows.",
+        "knowledgeUnit": "KU-330",
+        "evidence": "Workflow designer supports approval stages",
+        "citation": "Admin Guide p.58",
+        "document": "Admin Guide",
+        "page": 58,
+        "confidence": 0.88
+      },
+      {
+        "requirement": "The system must support role-based access control.",
+        "knowledgeUnit": "KU-105",
+        "evidence": "RBAC roles documented",
+        "citation": "Security Configuration Guide p.20",
+        "document": "Security Configuration Guide",
+        "page": 20,
+        "confidence": 0.66
+      }
+    ]
+  },
+  "gapAnalysis": {
+    "items": [
+      {
+        "requirementId": "REQ-002",
+        "gapType": "Product Gap",
+        "description": "No packaged SAP connector; custom development needed."
+      },
+      {
+        "requirementId": "REQ-004",
+        "gapType": "Documentation Gap",
+        "description": "ISO 27001 certification documentation not present in the repository."
+      },
+      {
+        "requirementId": "REQ-005",
+        "gapType": "Knowledge Gap",
+        "description": "Field-level RBAC capability not fully documented."
+      }
+    ]
+  },
+  "riskRegister": {
+    "items": [
+      {
+        "risk": "Custom SAP integration effort",
+        "description": "Requires bespoke development and testing.",
+        "severity": "High",
+        "likelihood": "Medium",
+        "mitigation": "Scope a custom connector with the delivery team.",
+        "owner": "Delivery Lead"
+      },
+      {
+        "risk": "Unverified ISO 27001 claim",
+        "description": "Submitting without evidence risks disqualification.",
+        "severity": "Critical",
+        "likelihood": "High",
+        "mitigation": "Obtain and certify ISO 27001 documentation before submission.",
+        "owner": "Compliance Officer"
+      }
+    ]
+  },
+  "statistics": {
+    "requirementsProcessed": 5,
+    "knowledgeUnitsRetrieved": 4,
+    "evidenceObjectsUsed": 4,
+    "citationsUsed": 4,
+    "averageConfidence": 0.708,
+    "processingTimeMs": null,
+    "llmCost": null,
+    "embeddingCost": null,
+    "totalCost": null
+  },
+  "audit": {
+    "executionId": "EXEC-0007",
+    "workflowVersion": "WF-004@0.8.0",
+    "promptVersion": null,
+    "model": null,
+    "repositoryVersion": "repo-2026.06",
+    "timestamp": "2026-07-07T10:00:00Z",
+    "reviewer": "J. Reviewer"
+  }
+}

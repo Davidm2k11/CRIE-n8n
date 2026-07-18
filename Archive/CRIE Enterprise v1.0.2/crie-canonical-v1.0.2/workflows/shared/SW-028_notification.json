@@ -1,0 +1,87 @@
+{
+  "name": "SW-028 Notification",
+  "meta": {
+    "crie": {
+      "sub_workflow_id": "SW-028",
+      "spec": "§268 (Module 13)",
+      "purpose": "Send notifications. Email (v1); Slack (future); Teams (future).",
+      "triggered_on": ["Workflow Failure", "Human Review", "Repository Certification Failure"],
+      "single_responsibility": "notification dispatch (§269)",
+      "provider_agnostic": "Channels reached through the Provider Adapter layer; no provider-specific logic in the workflow.",
+      "sprint": "Sprint 8",
+      "license": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra."
+    }
+  },
+  "nodes": [
+    {
+      "id": "start",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "parameters": {},
+      "notes": "Input: { event: 'WorkflowFailure'|'HumanReview'|'RepositoryCertificationFailure'|'Alert', severity, subject, body, correlation_id }."
+    },
+    {
+      "id": "select_channel",
+      "name": "Select Channel (config)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// §268. Channel selection is config-driven (config/admin.config.yaml ->\n// notifications.channels). v1 supports 'email'. 'slack'/'teams' are declared\n// but marked future: if selected, they route to a no-op-with-log path so the\n// workflow never silently drops a notification (§269 handle errors).\nconst cfg = $vars.CRIE_NOTIFY_CHANNELS ? JSON.parse($vars.CRIE_NOTIFY_CHANNELS) : { active: ['email'] };\nconst active = cfg.active || ['email'];\nconst j = $json;\nreturn active.map(ch => ({ json: { ...j, channel: ch, supported: ch === 'email' } }));"
+      },
+      "notes": "email = supported (v1). slack/teams = future (declared, not implemented) per §268."
+    },
+    {
+      "id": "route",
+      "name": "Route Supported?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": { "conditions": [ { "leftValue": "={{ $json.supported }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } } ] }
+      }
+    },
+    {
+      "id": "send_email",
+      "name": "Send Email (Provider Adapter)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [940, 220],
+      "parameters": { "workflowId": "SW-024", "options": {} },
+      "notes": "Email dispatched via the Provider Adapter layer (no provider-specific node hardcoded here). SMTP/API target and credentials are config + adapter."
+    },
+    {
+      "id": "log_future",
+      "name": "Log Unsupported Channel",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [940, 380],
+      "parameters": { "operation": "insert", "schema": "monitoring", "table": "workflow_logs",
+        "columns": "correlation_id, workflow_id, status, log_payload" },
+      "notes": "Future channel (slack/teams) requested but not implemented in v1 -> logged, not silently dropped (§269)."
+    },
+    {
+      "id": "done",
+      "name": "Return",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1180, 300],
+      "parameters": { "assignments": { "assignments": [ { "id": "r1", "name": "notified", "value": true, "type": "boolean" } ] } }
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": { "main": [[{ "node": "Select Channel (config)", "type": "main", "index": 0 }]] },
+    "Select Channel (config)": { "main": [[{ "node": "Route Supported?", "type": "main", "index": 0 }]] },
+    "Route Supported?": { "main": [
+      [{ "node": "Send Email (Provider Adapter)", "type": "main", "index": 0 }],
+      [{ "node": "Log Unsupported Channel", "type": "main", "index": 0 }]
+    ] },
+    "Send Email (Provider Adapter)": { "main": [[{ "node": "Return", "type": "main", "index": 0 }]] },
+    "Log Unsupported Channel": { "main": [[{ "node": "Return", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

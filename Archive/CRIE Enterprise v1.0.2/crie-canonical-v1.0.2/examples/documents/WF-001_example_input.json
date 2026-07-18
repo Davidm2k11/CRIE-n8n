@@ -1,0 +1,6 @@
+{
+  "note": "Trigger payload (binary omitted). WF-001 receives the file binary from the Google Drive trigger.",
+  "filename": "CUBES_Product_Manual.pdf",
+  "mimeType": "application/pdf",
+  "source": "GoogleDrive"
+}

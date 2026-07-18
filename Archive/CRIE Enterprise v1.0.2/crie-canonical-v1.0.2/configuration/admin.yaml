@@ -1,0 +1,70 @@
+# =====================================================================
+# CRIE — config/admin.config.yaml
+# Sprint 8 (Administration). Authored YAML is the SOURCE OF TRUTH (R-08),
+# synced into the configuration.* tables. Every configurable value the
+# Administration layer uses comes from here — no hardcoded values (Principle 7).
+#
+# All Rights Reserved, Copyright (c) 2026 Dawod Manasra. Unauthorized copying,
+# modification, distribution, or commercial use is prohibited without written
+# permission.
+# =====================================================================
+
+administration:
+
+  # §157 WF-005 runs on schedule. §558 dashboard refresh interval configurable.
+  schedule:
+    cron: "*/15 * * * *"          # WF-005 cadence (every 15 min)
+    timezone: "Asia/Dubai"
+  dashboard:
+    refresh_interval_seconds: 60  # §558 "refresh interval SHALL be configurable"
+
+  # §387 Alert Thresholds / §569 Alert Center. All thresholds configurable.
+  alert_thresholds:
+    repository_health_min: 70     # §528 score 0-100; alert below this
+    daily_cost_max: 50.0          # currency units; §198/§564
+    high_latency_ms: 8000         # §569 High Latency
+    queue_backlog_max: 500        # §569 Queue Backlog (R-18 dispatcher depth)
+    low_benchmark_score: 0.80     # §569 Low Benchmark Score (fraction of target)
+
+  # R-18 circuit breaker (implemented as provider health state in health_checks).
+  circuit_breaker:
+    failure_threshold: 5          # consecutive failures -> Open (§387)
+    half_open_after_seconds: 300  # recovery probe delay
+    recovery_success_to_close: 2  # successes in HalfOpen -> Closed
+
+  # §568 Health Center — services monitored (provider-agnostic labels).
+  health_services:
+    - n8n
+    - supabase
+    - google_drive
+    - azure_ocr
+    - openai
+    - claude
+    - embeddings
+    - storage
+    - queue_system
+    - repository
+
+  # §268 SW-028 Notification channels. email = v1; slack/teams = future.
+  notifications:
+    active: ["email"]
+    declared_future: ["slack", "teams"]
+    email:
+      # Concrete address/credentials resolved through the Provider Adapter
+      # layer + secrets registry — never stored here (secrets externalized, §328).
+      from_ref: "secret:CRIE_NOTIFY_EMAIL_FROM"
+      to_ref: "secret:CRIE_NOTIFY_EMAIL_TO"
+
+  # §575 Export Center formats (PDF reserved future).
+  export:
+    formats: ["CSV", "Excel", "JSON"]
+    formats_future: ["PDF"]
+
+  # §576 Administration Roles (v1 set; granular permissions future).
+  roles: ["Administrator", "Knowledge Manager", "Reviewer", "Read Only"]
+
+  # S8-9 scheduled validation toggles.
+  validation:
+    config_validation_enabled: true   # §327
+    prompt_validation_enabled: true   # §157
+    on_failure: "alert"               # raise Alert Center entry (do not block)

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crie/contracts/structured_log",
+  "title": "Structured Log Entry",
+  "description": "Canonical structured log contract (§15). Free-text logging is prohibited; logs are structured JSON. Persisted to monitoring.workflow_logs (§229, Sprint 2).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workflowId", "executionId", "nodeId", "correlationId",
+    "timestamp", "duration", "status", "retryCount"
+  ],
+  "properties": {
+    "workflowId":    { "type": "string" },
+    "executionId":   { "type": "string" },
+    "nodeId":        { "type": "string" },
+    "correlationId": { "type": "string" },
+    "timestamp":     { "type": "string", "format": "date-time" },
+    "duration":      { "type": "number", "minimum": 0, "description": "milliseconds" },
+    "status":        { "type": "string", "enum": ["SUCCESS", "FAILED", "SKIPPED"] },
+    "level":         { "type": "string", "enum": ["INFO", "WARNING", "ERROR", "CRITICAL"] },
+    "error":         { "type": ["string", "null"] },
+    "retryCount":    { "type": "integer", "minimum": 0 },
+    "provider":      { "type": ["string", "null"] },
+    "model":         { "type": ["string", "null"] }
+  }
+}

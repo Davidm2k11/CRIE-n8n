@@ -1,0 +1,26 @@
+# =============================================================================
+# CRIE development overrides  (Sprint 10, S10-4 · §630 development/)
+# -----------------------------------------------------------------------------
+#   docker compose \
+#     -f deployment/docker-compose/docker-compose.yml \
+#     -f deployment/development/docker-compose.dev.yml up -d
+#
+# Developer conveniences (NOT for production):
+#   * database port published to the host for psql / GUI access
+#   * single worker
+#   * verbose n8n logging
+# =============================================================================
+
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  n8n-main:
+    environment:
+      N8N_LOG_LEVEL: debug
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS: "all"
+
+  n8n-worker:
+    deploy:
+      replicas: 1

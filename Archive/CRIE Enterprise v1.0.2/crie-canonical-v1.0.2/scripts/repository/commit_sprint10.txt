@@ -1,0 +1,50 @@
+Sprint 10 — Production Hardening (v1.0.0)
+
+Final release. Prepares production deployment: adds the deployment/operations
+layer and the §204/§407 documentation set, preceded by a full repository audit
+against the frozen CRIE Enterprise Specification v1.1.1. Implements only Sprint
+10 scope (S10-1…S10-9). No migration, workflow, prompt, contract, or config
+value altered; benchmark numeric targets unchanged (§196). Architecture frozen.
+
+Added — deployment (S10-4/5/6, §200/§325/§630):
+  deployment/docker (Dockerfile + pinned requirements),
+  deployment/docker-compose (n8n main+worker queue mode R-18, postgres+pgvector,
+  redis) with production/ and development/ overrides, supabase/init bootstrap,
+  n8n/ env reference, and idempotent scripts (apply_migrations, rollback_
+  migrations, seed_config, import_workflows, smoke_test, entrypoint);
+  .github/workflows/ci.yml (§200 pipeline, stop-on-fail, protected prod deploy).
+
+Added — documentation (S10-1/5/6/8, §204/§407):
+  Deployment Guide, Operations Guide, Backup & Recovery Guide, API Guide;
+  governance reports: Repository Audit Report, Security Review, Production
+  Readiness Report; Sprint 10 manifest. README refreshed to canonical v1.0.0.
+
+Added — test tooling:
+  tests/run_all.py (unified acceptance gate, 9 suites/265 tests; used by CI and
+  §406/§616 checks); tests/_pathsetup.py (reconstructs retrieval/reasoning/
+  output_generation packages from canonical flat modules — no logic regenerated).
+
+Fixed — audit (behavior-preserving; no architecture/feature change):
+  - repository layer non-importable: repository_api.js/repository_writer.js
+    internal requires corrected to canonical repository_* filenames;
+  - acceptance suites non-runnable: corrected stale module/config/dataset/
+    contract/example paths across Sprint 5/6/7/8/9 and JS suites + Sprint 9
+    runner;
+  - R-14 startup validation reported Critical on valid config:
+    validate_configuration.py now namespaces unwrapped retrieval.yaml by stem and
+    root-merges providers.yaml/authority.yaml -> Healthy (no config mutated);
+  - §634 folder-name check wrongly flagged PR-00X identifier folders -> exempted
+    canonical ID folders;
+  - test_database.py expected 23 migrations -> updated to canonical 0001-0028;
+  - annotated test_platform_foundation.sh / test_sprint2_database.sh as
+    historical, non-gating snapshots.
+
+Packaging / security:
+  removed self-nested crie-canonical-v0_10_0_tar.gz; .gitignore excludes release
+  bundles; .env.example remains value-free.
+
+Status:
+  acceptance gate 9/9 (265 tests); startup validation Healthy; benchmark harness
+  clean. §406 gate Met except deployment-side operational sign-offs (UAT,
+  backup/recovery drills, live monitoring), reported Pending. VERSION -> 1.0.0.
+  Tag v1.0.0. Project closure per §698 upon target-env sign-offs.

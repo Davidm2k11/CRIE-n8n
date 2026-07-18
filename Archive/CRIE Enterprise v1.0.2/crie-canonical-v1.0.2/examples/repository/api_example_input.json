@@ -1,0 +1,92 @@
+{
+  "operation": "createDocument",
+  "note": "Certified ingestion bundle as WF-001 (Sprint 3) emits it; embedding vectors abbreviated.",
+  "bundle": {
+    "documentId": "6e70f5f0-3dd5-49f9-8408-2cd84468a435",
+    "ocrConfidence": 0.95,
+    "createdBy": "ingestion",
+    "changeReason": "initial",
+    "metadata": [
+      {
+        "key": "Product",
+        "value": "CUBES"
+      }
+    ],
+    "knowledgeUnits": [
+      {
+        "id": "ae2874c5-bda0-4a6f-849e-258ea3de4855",
+        "statement": "The Dashboard supports PDF export.",
+        "category": "Feature",
+        "authoritySource": "Manual",
+        "sourcePage": 1,
+        "sourceParagraph": 1
+      },
+      {
+        "id": "626fd3aa-ea11-41af-b07e-b5fe974375b2",
+        "statement": "The KPI module supports cascading.",
+        "category": "Capability",
+        "authoritySource": "Manual",
+        "sourcePage": 1,
+        "sourceParagraph": 2
+      }
+    ],
+    "evidence": [
+      {
+        "id": "f0359ddd-8f12-404e-b7cb-b26ebd51be67",
+        "knowledgeUnitId": "ae2874c5-bda0-4a6f-849e-258ea3de4855",
+        "excerpt": "The Dashboard supports PDF export.",
+        "sourcePage": 1
+      },
+      {
+        "id": "1cb9798d-b3ba-4d82-a250-d07ca609e870",
+        "knowledgeUnitId": "626fd3aa-ea11-41af-b07e-b5fe974375b2",
+        "excerpt": "The KPI module supports cascading.",
+        "sourcePage": 1
+      }
+    ],
+    "citations": [
+      {
+        "id": "757f15ff-d037-4a02-9bda-d12be8a8173d",
+        "evidenceId": "f0359ddd-8f12-404e-b7cb-b26ebd51be67",
+        "documentId": "6e70f5f0-3dd5-49f9-8408-2cd84468a435",
+        "page": 1,
+        "paragraph": 1
+      },
+      {
+        "id": "7432a6a5-d1a6-449a-9ded-611778d0a77d",
+        "evidenceId": "1cb9798d-b3ba-4d82-a250-d07ca609e870",
+        "documentId": "6e70f5f0-3dd5-49f9-8408-2cd84468a435",
+        "page": 1,
+        "paragraph": 2
+      }
+    ],
+    "chunks": [
+      {
+        "id": "be51bb64-a7d6-4282-b0b6-0b9c57714fbf",
+        "knowledgeUnitId": "ae2874c5-bda0-4a6f-849e-258ea3de4855",
+        "text": "The Dashboard supports PDF export.",
+        "ordinal": 0
+      },
+      {
+        "id": "3e301018-b496-450f-a0e1-9678e8777ba1",
+        "knowledgeUnitId": "626fd3aa-ea11-41af-b07e-b5fe974375b2",
+        "text": "The KPI module supports cascading.",
+        "ordinal": 0
+      }
+    ],
+    "embeddings": [
+      {
+        "id": "c72c7edc-e928-4cc6-a00a-7edf40c64118",
+        "chunkId": "be51bb64-a7d6-4282-b0b6-0b9c57714fbf",
+        "dimensions": 1536,
+        "vector": "[1536 floats]"
+      },
+      {
+        "id": "3c31756d-dddd-40c0-bf09-ee472e40540c",
+        "chunkId": "3e301018-b496-450f-a0e1-9678e8777ba1",
+        "dimensions": 1536,
+        "vector": "[1536 floats]"
+      }
+    ]
+  }
+}

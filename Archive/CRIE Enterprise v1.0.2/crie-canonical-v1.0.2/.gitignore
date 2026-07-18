@@ -1,0 +1,48 @@
+# ── Environment & secrets (never commit; see §169, §321–324) ──
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+credentials/*.json
+!workflows/credentials/.gitkeep
+
+# ── Dependencies ──
+node_modules/
+.pnpm-store/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ── n8n runtime ──
+.n8n/
+n8n-data/
+*.n8n.local.json
+
+# ── Supabase local ──
+.supabase/
+supabase/.branches/
+supabase/.temp/
+
+# ── Build / logs / OS ──
+dist/
+build/
+*.log
+logs/
+.DS_Store
+Thumbs.db
+
+# ── Editor ──
+.idea/
+.vscode/
+*.swp
+
+# ── Benchmark run artifacts (reports themselves are retained per §631) ──
+benchmark/**/*.tmp
+
+# ── Release bundles (built by scripts/repository; never nested in the tree) ──
+*.tar.gz
+crie-canonical-*.tar.gz
+crie-sprint*.tar.gz

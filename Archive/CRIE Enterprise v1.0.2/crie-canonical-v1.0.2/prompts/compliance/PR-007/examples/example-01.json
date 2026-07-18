@@ -1,0 +1,21 @@
+{
+  "input": {
+    "totalRequirements": 5,
+    "overallCompliancePercent": 60.0,
+    "fullyCompliantCount": 3,
+    "partiallyCompliantCount": 1,
+    "customDevelopmentCount": 0,
+    "unsupportedCount": 0,
+    "insufficientEvidenceCount": 1
+  },
+  "output": {
+    "keyRisks": [
+      "One requirement lacks sufficient certified evidence and needs documentation before submission.",
+      "One requirement is only partially met and may require configuration to close the gap."
+    ],
+    "recommendedNextSteps": [
+      "Source certified documentation for the insufficient-evidence requirement.",
+      "Confirm configuration scope for the partially compliant requirement with the delivery team."
+    ]
+  }
+}

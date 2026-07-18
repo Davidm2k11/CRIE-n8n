@@ -1,0 +1,142 @@
+# =============================================================================
+# CRIE Benchmark Configuration (Sprint 9)  —  R-08 source of truth
+# -----------------------------------------------------------------------------
+# All benchmark targets below are transcribed VERBATIM from the frozen
+# specification (§196, §197, §394-400). Numbers are NOT changed — they are the
+# spec's own targets, externalized here per R-08 so the harness and the
+# acceptance views read targets from config rather than hardcoding them.
+#
+# Per Task Backlog S9 DoD: "benchmark targets (§196) evaluated (numbers
+# unchanged from spec)". Editing a value here does NOT relax the spec; it only
+# reflects a spec revision. For v1.1 these are frozen.
+# =============================================================================
+
+version: "0.10.0"
+spec_version: "1.1.1"
+
+# --- §392 dataset difficulty tiers (each dataset must contain all four) ------
+difficulty_tiers: [Easy, Medium, Hard, Expert]
+
+# --- §392 document categories ------------------------------------------------
+dataset_categories:
+  - Product Manuals
+  - Training Material
+  - SRS Documents
+  - Implementation Guides
+  - Architecture Documents
+  - Compliance Sheets
+  - RFP Documents
+  - RFI Documents
+
+# --- §393 requirement types --------------------------------------------------
+requirement_types:
+  - Functional
+  - Non-functional
+  - Security
+  - Integration
+  - Reporting
+  - Performance
+  - Licensing
+  - Support
+  - Migration
+  - Configuration
+
+# --- Benchmark quality targets (§196, §394-400) ------------------------------
+# higher_is_better: true  => pass when metric_value >= target
+# higher_is_better: false => pass when metric_value <= target
+benchmarks:
+
+  knowledge_extraction:            # §394
+    spec_ref: "§394"
+    gated_metric: f1
+    target: 0.95                   # §394 "F1 > 95%"  /  §196 "95%+"
+    higher_is_better: true
+    report_metrics: [precision, recall, f1, duplicate_rate, missing_units]
+
+  retrieval:                       # §395
+    spec_ref: "§395"
+    gated_metric: recall_at_10
+    target: 0.95                   # §395/§196 "Recall@10 >= 95%"
+    higher_is_better: true
+    report_metrics: [recall_at_5, recall_at_10, mrr, ndcg, authority_accuracy]
+
+  citation:                        # §396
+    spec_ref: "§396"
+    gated_metric: citation_accuracy
+    target: 0.99                   # §396/§196 "99%+"
+    higher_is_better: true
+    report_metrics: [citation_accuracy, broken_citation_rate, missing_citation_rate]
+
+  hallucination:                   # §397
+    spec_ref: "§397"
+    gated_metric: hallucination_rate
+    target: 0.02                   # §397/§196 "Hallucination < 2%"
+    higher_is_better: false
+    report_metrics: [hallucination_rate, unsupported_claims, invented_citations]
+
+  compliance_accuracy:             # §398
+    spec_ref: "§398"
+    gated_metric: human_agreement
+    target: 0.95                   # §398 ">= 95%"
+    higher_is_better: true
+    report_metrics: [human_agreement]
+
+  cost:                            # §400 — reported, not gated by a numeric §196 target
+    spec_ref: "§400"
+    gated_metric: null
+    report_metrics:
+      - ocr_cost
+      - embedding_cost
+      - reasoning_cost
+      - storage_cost
+      - avg_cost_per_requirement
+      - avg_cost_per_document
+      - monthly_projection
+
+# --- Performance / latency targets (§197, §399) ------------------------------
+# Seconds. Maximum targets — pass when duration_seconds <= target_seconds.
+latency:
+  spec_ref: "§197/§399"
+  stage_targets_seconds:
+    ocr: 90
+    knowledge_extraction: 90
+    chunking: 30
+    embedding: 30
+    retrieval: 3
+    reasoning: 25
+    google_sheets_export: 5
+    # document_registration and end_to_end are measured/stored historically
+    # (§399) but have no discrete §197 maximum; reported, not gated.
+    document_registration: null
+    end_to_end: null
+
+# --- §401 load-testing scales ------------------------------------------------
+load_scales_documents: [10, 100, 500, 1000, 5000]
+
+# --- §402 failure scenarios (each must produce deterministic recovery) -------
+failure_scenarios:
+  - ocr_failure
+  - llm_failure
+  - database_failure
+  - network_failure
+  - timeout
+  - corrupted_document
+  - missing_metadata
+  - repository_lock
+
+# --- §403 security checks ----------------------------------------------------
+security_checks:
+  - prompt_injection
+  - malformed_documents
+  - large_documents
+  - unexpected_file_types
+  - credential_leakage
+  - repository_isolation
+  - audit_integrity
+
+# --- §404 UAT roles ----------------------------------------------------------
+uat_roles:
+  - Presales Consultant
+  - Solution Consultant
+  - Business Analyst
+  - Proposal Manager

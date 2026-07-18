@@ -1,0 +1,32 @@
+{
+  "name": "PROBE — Binary Across Execute-Workflow Boundary",
+  "nodes": [
+    {
+      "id": "probe-trigger",
+      "name": "When Executed by WF-001",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "parameters": { "inputSource": "passThrough" },
+      "notes": "Isolated probe trigger. Mirrors SW-005's trigger config (v1.1, passThrough) so the boundary behavior measured here matches what SW-005 would see."
+    },
+    {
+      "id": "probe-report",
+      "name": "Report Binary Availability",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ISOLATED PROBE — remove after one execution.\n// Measures whether binary crosses the Execute Workflow boundary into a sub-workflow\n// on THIS n8n instance + binary storage mode. No side effects, no DB, no external calls.\nlet viaInput = null, viaTrigger = null, inputKeys = [], triggerKeys = [];\ntry { viaInput   = $input.first().binary || null; } catch (e) {}\ntry { viaTrigger = $('When Executed by WF-001').first().binary || null; } catch (e) {}\nif (viaInput)   inputKeys   = Object.keys(viaInput);\nif (viaTrigger) triggerKeys = Object.keys(viaTrigger);\n\nlet bufferOk = false, bufferLen = null, bufferErr = null;\ntry {\n  const buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n  bufferOk  = Buffer.isBuffer(buf) && buf.length > 0;\n  bufferLen = Buffer.isBuffer(buf) ? buf.length : null;\n} catch (e) { bufferErr = String(e && e.message ? e.message : e).slice(0, 300); }\n\n// Describe the shape of binary.data without dumping the payload.\nlet dataDesc = null;\nif (viaInput && viaInput.data) {\n  const d = viaInput.data;\n  dataDesc = {\n    hasId:        d.id !== undefined,\n    idValue:      d.id !== undefined ? String(d.id).slice(0, 60) : null,\n    hasInlineData: typeof d.data === 'string',\n    inlineLen:    typeof d.data === 'string' ? d.data.length : null,\n    mimeType:     d.mimeType || null,\n    fileName:     d.fileName || null,\n    fileSize:     d.fileSize || null\n  };\n}\n\nreturn [{ json: {\n  _probe: 'binary-boundary',\n  input_has_binary:          !!viaInput,\n  input_binary_keys:         inputKeys,\n  trigger_has_binary:        !!viaTrigger,\n  trigger_binary_keys:       triggerKeys,\n  data_property:             dataDesc,\n  getBinaryDataBuffer_ok:    bufferOk,\n  getBinaryDataBuffer_bytes: bufferLen,\n  getBinaryDataBuffer_error: bufferErr,\n  n8n_binary_mode_hint:      (dataDesc && dataDesc.hasId && !dataDesc.hasInlineData) ? 'filesystem/s3 (pointer)' : (dataDesc && dataDesc.hasInlineData ? 'in-memory (base64 inline)' : 'unknown')\n}}];"
+      },
+      "notes": "Emits a single JSON report. Decision rule:\n- getBinaryDataBuffer_ok=true  -> Design A viable (binary crosses & is readable).\n- input_has_binary=true but getBinaryDataBuffer_ok=false -> pointer arrives but unresolvable in child -> Design A rejected.\n- input_has_binary=false -> binary does not cross at all.\nNo DB writes, no external calls, no state mutation. Safe to run once and delete."
+    }
+  ],
+  "connections": {
+    "When Executed by WF-001": { "main": [[{ "node": "Report Binary Availability", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "meta": { "workflowVersion": "probe-1.0.0", "purpose": "Isolated one-shot probe for binary propagation across the Execute Workflow boundary. Not part of CRIE runtime. Delete after result captured." }
+}

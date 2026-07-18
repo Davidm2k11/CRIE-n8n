@@ -1,0 +1,54 @@
+# Prompt Registry manifest (§13, §172-175, R-04).
+# Structure + versioning only — prompt BODIES (system.md/user.md/schema.json/examples)
+# are authored in their owning sprints (PR-001/PR-002 in Sprint 3; PR-003..PR-005 in
+# Sprints 5-6; PR-006/PR-007 in Sprint 7; PR-008 in Sprint 6). They are ABSENT here.
+#
+# Canonical catalog: the §173 eight-prompt set (R-04). No new prompt IDs may be added.
+# Prompts are loaded by ID+version from this registry; never embedded in workflows (§608).
+# Every prompt update creates a NEW version (§174); workflows pin a specific version.
+# This YAML is the authored source of truth; it is cached into
+# configuration.prompt_registry by the seed step (§228, R-08, Sprint 2).
+
+registryVersion: 1
+
+prompts:
+  - id: PR-001
+    name: Knowledge Extraction
+    category: knowledge          # prompts/knowledge/
+    latestVersion: null          # body authored in Sprint 3
+    ownedBySprint: 3
+  - id: PR-002
+    name: Metadata Extraction
+    category: knowledge
+    latestVersion: null
+    ownedBySprint: 3
+  - id: PR-003
+    name: Requirement Analysis
+    category: compliance
+    latestVersion: null
+    ownedBySprint: 5
+  - id: PR-004
+    name: Compliance Assessment
+    category: compliance
+    latestVersion: null
+    ownedBySprint: 6
+  - id: PR-005
+    name: Output Validation
+    category: validation
+    latestVersion: null
+    ownedBySprint: 6
+  - id: PR-006
+    name: Proposal Writing
+    category: review             # also produces Gap Analysis / Risk Register (R-04)
+    latestVersion: null
+    ownedBySprint: 7
+  - id: PR-007
+    name: Executive Summary
+    category: review
+    latestVersion: null
+    ownedBySprint: 7
+  - id: PR-008
+    name: Human Review Assistant
+    category: review
+    latestVersion: null
+    ownedBySprint: 6

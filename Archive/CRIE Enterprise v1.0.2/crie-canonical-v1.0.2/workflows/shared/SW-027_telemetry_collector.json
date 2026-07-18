@@ -1,0 +1,61 @@
+{
+  "name": "SW-027 Telemetry Collector",
+  "meta": {
+    "crie": {
+      "sub_workflow_id": "SW-027",
+      "spec": "§267 (Module 13)",
+      "purpose": "Collect Runtime, Tokens, Cost, Provider, Model, Retry Count, Success.",
+      "single_responsibility": "telemetry collection (§269)",
+      "sprint": "Sprint 8",
+      "license": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra."
+    }
+  },
+  "nodes": [
+    {
+      "id": "start",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "parameters": {},
+      "notes": "Input: { correlation_id, phase: 'open'|'close', span?, provider?, model?, tokens?, retry_count?, success? }."
+    },
+    {
+      "id": "collect",
+      "name": "Assemble Telemetry Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// §267 SW-027. Deterministic assembly of the telemetry record. Cost is\n// computed from token counts via config-driven per-model rates (Provider\n// Adapter pricing table) — NO hardcoded prices (Principle 7). Confidence is\n// platform-computed elsewhere (R-03/§295); SW-027 only records telemetry.\nconst j = $json;\nconst rates = $vars.CRIE_MODEL_RATES ? JSON.parse($vars.CRIE_MODEL_RATES) : {};\nconst r = rates[j.model] || { input: 0, output: 0 };\nconst inTok = Number(j.tokens?.input || 0);\nconst outTok = Number(j.tokens?.output || 0);\nconst estimated_cost = (inTok * (r.input || 0)) + (outTok * (r.output || 0));\nreturn [{ json: {\n  correlation_id: j.correlation_id,\n  phase: j.phase || 'close',\n  runtime_ms: Number(j.span?.runtime_ms || 0),\n  input_tokens: inTok,\n  output_tokens: outTok,\n  provider: j.provider || null,\n  model: j.model || null,\n  retry_count: Number(j.retry_count || 0),\n  success: j.success !== false,\n  estimated_cost\n} }];"
+      },
+      "notes": "Cost from config-driven rates; no hardcoded pricing. All seven §267 fields present."
+    },
+    {
+      "id": "persist",
+      "name": "Persist Telemetry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 300],
+      "parameters": { "operation": "insert", "schema": "monitoring", "table": "telemetry",
+        "columns": "correlation_id, workflow_runtime_ms, retry_count, success, estimated_cost, provider, model, input_tokens, output_tokens" },
+      "notes": "Feeds admin.vw_ai_dashboard / admin.vw_cost_intelligence / admin.vw_operational_kpis."
+    },
+    {
+      "id": "done",
+      "name": "Return",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [900, 300],
+      "parameters": { "assignments": { "assignments": [ { "id": "r1", "name": "collected", "value": true, "type": "boolean" } ] } }
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": { "main": [[{ "node": "Assemble Telemetry Record", "type": "main", "index": 0 }]] },
+    "Assemble Telemetry Record": { "main": [[{ "node": "Persist Telemetry", "type": "main", "index": 0 }]] },
+    "Persist Telemetry": { "main": [[{ "node": "Return", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

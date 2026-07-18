@@ -1,0 +1,159 @@
+{
+  "name": "SW-013 Embeddings",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "50606ec6-16f1-47ce-b8b5-31e316527c1e",
+      "name": "When Executed by WF-001",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        96,
+        -128
+      ],
+      "notes": "Accept all data (passthrough). inputSource MUST be lowercase 'passthrough'; n8n silently ignores camelCase 'passThrough' on import and falls back to defined-fields mode, dropping the caller's payload (and any binary)."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT settings FROM configuration.providers WHERE kind='embedding';",
+        "options": {}
+      },
+      "id": "3dfe451b-af5b-48b7-bd61-069e50b7dc35",
+      "name": "Load Embedding Settings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        320,
+        -128
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "36wScZRTy6L3yvWQ",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Embedding provider/model/dimensions (R-09=1536). CRIE Postgres credential."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build OpenAI embeddings request over chunk texts (batched by config).\nconst settings = $('Load Embedding Settings').first().json.settings;   // jsonb object\nconst chunks = $('When Executed by WF-001').first().json.chunks || [];\nreturn [{ json: { _model: settings.model, _dims: settings.dimensions ?? 1536,\n  input: chunks.map(c=>c.text), _chunkIds: chunks.map(c=>c.id) } }];"
+      },
+      "id": "7bb1bfd9-3f1a-4562-9c18-c682d4b2ed82",
+      "name": "Build Embedding Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        -128
+      ],
+      "notes": "Batch chunk texts."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json._model, input: $json.input, dimensions: $json._dims }) }}",
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "id": "02503045-61b0-4fbe-9b3e-f155e9faf445",
+      "name": "OpenAI Embeddings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        768,
+        -128
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "5M6iYUo4yxKK9sn5",
+          "name": "OpenAI account"
+        }
+      },
+      "notes": "Credentialed embeddings call."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Enrichment: preserve incoming item (incl. full bundle for SW-014), add { embeddings, embeddingDimOk }.\nconst incoming = $('When Executed by WF-001').first().json;\nconst resp = $json;\nconst req = $('Build Embedding Request').first().json;\nconst dims = req._dims;\nconst data = resp.data || [];\nconst embeddings = data.map((d,i)=>({ chunkId: req._chunkIds[i], vector: d.embedding, dimensions: dims }));\nconst embeddingDimOk = embeddings.every(e => Array.isArray(e.vector) && e.vector.length === dims);\nreturn [{ json: { ...incoming, embeddings, embeddingDimOk } }];"
+      },
+      "id": "9bfcd571-8618-4103-9d57-f6d4fc7121f9",
+      "name": "Map + R-09 Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        976,
+        -128
+      ],
+      "notes": "-> { embeddings, embeddingDimOk }."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by WF-001": {
+      "main": [
+        [
+          {
+            "node": "Load Embedding Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Embedding Settings": {
+      "main": [
+        [
+          {
+            "node": "Build Embedding Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Embedding Request": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings": {
+      "main": [
+        [
+          {
+            "node": "Map + R-09 Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "7f0b1fcf-c60b-48da-8875-916c954aa907",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eab2f6ae955b6f7992c1cc0c248db40d1634d6ef3cafc789bd70dd7320df16a3"
+  },
+  "nodeGroups": [],
+  "id": "fTAVbMiy7ANsT0Yi",
+  "tags": []
+}

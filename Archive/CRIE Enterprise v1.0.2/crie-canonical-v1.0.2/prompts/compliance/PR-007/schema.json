@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "crie/prompts/PR-007/schema.json",
+  "title": "PR-007 Executive Summary output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["keyRisks", "recommendedNextSteps"],
+  "properties": {
+    "keyRisks": { "type": "array", "items": { "type": "string" } },
+    "recommendedNextSteps": { "type": "array", "items": { "type": "string" } }
+  }
+}

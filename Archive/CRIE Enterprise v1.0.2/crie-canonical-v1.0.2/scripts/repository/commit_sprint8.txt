@@ -1,0 +1,30 @@
+Sprint 8 — Administration (WF-005): dashboards, health/alerts, audit, sub-workflows
+
+Implements Sprint 8 backlog items S8-1…S8-9 against CRIE Enterprise
+Specification v1.1.1 (frozen). Administration = WF-005 (R-02); dashboards are
+Supabase views surfaced in a BI tool — n8n produces data, not UI (R-17);
+circuit breaker via health_checks state (R-18). Additive only; no redesign.
+
+Artifacts:
+- workflows/WF-005_administration.json  (scheduled master workflow, §157/§159)
+- sub-workflows/SW-026,SW-027,SW-028_*.json  (§266–§268, S8-8)
+- migrations/0024_admin_dashboard_views.sql  (§558–§567,§577,§198/§533/§560, S8-1/4/5)
+- migrations/0025_admin_registry_audit_views.sql  (§570–§572, S8-6/7)
+- migrations/0026_health_alert_center.sql  (§568–§569, R-18, S8-3)
+- migrations/rollback/*  (matching rollbacks, §239)
+- scripts/admin_scheduled_validation.py  (§327 config + §157 prompt validation, S8-9)
+- config/admin.config.yaml  (R-08 source of truth; no hardcoded values, Principle 7)
+- docs/SPRINT8_ADMINISTRATION.md, examples/*, prompts/README.md, tests/test_sprint8.py
+
+Constraints honored:
+- No new prompt IDs (R-04); no prompt bodies embedded (§608/§612).
+- Sprint isolation: no Sprint 9 functionality (benchmark suite/targets deferred).
+- No placeholders; all artifacts runnable/importable/committable.
+
+Verification: 83/83 acceptance tests passing. §578 acceptance criteria all met.
+Exit gate: Administration Console operational (views + BI surface).
+
+Version: 0.9.0
+Tag: v0.9.0
+
+All Rights Reserved, Copyright (c) 2026 Dawod Manasra.

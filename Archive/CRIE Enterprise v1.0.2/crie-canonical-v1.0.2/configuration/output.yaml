@@ -1,0 +1,135 @@
+# CRIE — Output Generation Configuration (Sprint 7 / WF-004)
+# All Rights Reserved, Copyright (c) 2026 Dawod Manasra.
+# Unauthorized copying, modification, distribution, or commercial use is
+# prohibited without written permission.
+#
+# Authoritative sources: CRIE_Enterprise_Specification_v1.1.1.md
+#   Module 06 (Output Generation) §98-§115; §102 Compliance Matrix columns;
+#   §103 Google Sheets mapping; §107 review states; §112 audit trail;
+#   §113 export rules; Module 35 §363-§364 (configurable column mapping);
+#   Module 49 §547-§552 (proposal deliverables). Decisions: R-02, R-04.
+#
+# This file is the single source of truth for output formatting per R-08
+# (YAML-authored, cached in DB). No column numbers are hardcoded (§364).
+
+schemaVersion: "1.1"
+
+# --------------------------------------------------------------------------
+# Compliance Matrix — one row per requirement (§102, §547).
+# 'source' is a JSONPath-style key on the canonical Compliance Result (§295).
+# 'sheetsColumn' provides the configuration-driven mapping for SW-025 (§364):
+# no hardcoded column numbers anywhere in workflow logic.
+# --------------------------------------------------------------------------
+complianceMatrix:
+  # Superset of §102 (11 columns) and §547 (9 columns); §547 is a subset.
+  columns:
+    - key: requirementId
+      header: "Requirement ID"
+      source: "requirementId"
+      sheetsColumn: "A"
+    - key: requirement
+      header: "Requirement"
+      source: "requirement"
+      sheetsColumn: "B"
+    - key: category
+      header: "Category"
+      source: "category"          # requirement category (§102); may be null
+      sheetsColumn: "C"
+    - key: complianceLevel
+      header: "Compliance Level"
+      source: "complianceLevel"   # deterministic (R-11)
+      sheetsColumn: "D"
+    - key: response
+      header: "Response"
+      source: "summary"           # proposal-ready answer (§544/§547)
+      sheetsColumn: "E"
+    - key: supportingEvidence
+      header: "Supporting Evidence"
+      source: "supportingEvidence"
+      sheetsColumn: "F"
+    - key: citation
+      header: "Citation"
+      source: "citations"
+      sheetsColumn: "G"
+    - key: confidence
+      header: "Confidence"
+      source: "confidence"        # platform-computed (R-10)
+      sheetsColumn: "H"
+    - key: reviewRequired
+      header: "Review Required"
+      source: "reviewRequired"
+      sheetsColumn: "I"
+    - key: reviewer
+      header: "Reviewer"
+      source: "review.reviewer"
+      sheetsColumn: "J"
+    - key: reviewStatus
+      header: "Review Status"
+      source: "review.status"
+      sheetsColumn: "K"
+
+# --------------------------------------------------------------------------
+# Google Sheets writer (SW-025 §265, Module 35 §363).
+# --------------------------------------------------------------------------
+googleSheets:
+  freezeHeaderRow: true
+  operations: [createSheet, appendRows, updateRows, createTabs, freezeHeader, applyFormatting]
+  tabs:
+    complianceMatrix: "Compliance Matrix"
+    executiveSummary: "Executive Summary"
+    evidenceReport: "Evidence Report"
+    gapAnalysis: "Gap Analysis"
+    riskRegister: "Risk Register"
+  # Adapter provisioning is deferred to target deployment (scaffold-then-provision).
+  adapter: "googleSheets"
+
+# --------------------------------------------------------------------------
+# Evidence Report columns (§110).
+# --------------------------------------------------------------------------
+evidenceReport:
+  columns: [requirement, knowledgeUnit, evidence, citation, document, page, confidence]
+
+# --------------------------------------------------------------------------
+# Review workflow (§106-§107, §551). Enum is fixed by the spec.
+# --------------------------------------------------------------------------
+review:
+  states: [Pending, Assigned, "In Review", Approved, Rejected, "Needs Clarification", Archived]
+  initialState: "Pending"
+  # §106/§551: rejected responses return to the Enterprise Reasoning Engine (WF-003).
+  onReject: "return-to-reasoning"
+  publishRequiresState: "Approved"
+
+# --------------------------------------------------------------------------
+# Export rules (§113) and audit trail (§112).
+# --------------------------------------------------------------------------
+export:
+  deterministic: true                 # §113: identical inputs -> identical output
+  formats: [googleSheets, json, markdown]   # excel/pdf/word/pptx are Future (§101)
+  auditFields:
+    - executionId
+    - workflowVersion
+    - promptVersion
+    - model
+    - repositoryVersion               # canonical field 'repositoryVersion' (§295)
+    - timestamp                        # from 'generatedAt' (§295)
+    - reviewer
+
+# --------------------------------------------------------------------------
+# Gap Analysis classification (§549) — produced by PR-006/PR-007 (R-04),
+# NOT a new prompt. These are the allowed gap categories only.
+# --------------------------------------------------------------------------
+gapAnalysis:
+  gapTypes: ["Documentation Gap", "Product Gap", "Knowledge Gap"]
+  # Deterministic seed conditions for gap detection from the Compliance Result:
+  triggers:
+    documentationGap: "complianceLevel in [Insufficient Evidence] and supportingKnowledgeUnits empty"
+    productGap: "complianceLevel in [Not Supported, Custom Development Required]"
+    knowledgeGap: "complianceLevel in [Partially Compliant] and confidence < reviewConfidenceThreshold"
+
+# --------------------------------------------------------------------------
+# Risk Register fields (§550) — produced by PR-006/PR-007 (R-04).
+# --------------------------------------------------------------------------
+riskRegister:
+  fields: [risk, description, severity, likelihood, mitigation, owner]
+  severityScale: [Low, Medium, High, Critical]
+  likelihoodScale: [Low, Medium, High]

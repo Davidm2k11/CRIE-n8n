@@ -1,0 +1,21 @@
+# Canonical Knowledge Category enum (§438, R-05) — the 16 frozen values.
+# Frozen: no custom categories in v1 (§438). Seeded as a reference table and
+# enforced by a CHECK constraint on knowledge_units.category (0018).
+# This list is authoritative for both the seed and the CHECK constraint.
+categories:
+  - Feature
+  - Business Rule
+  - Requirement
+  - Limitation
+  - Configuration
+  - Permission
+  - Calculation
+  - Workflow
+  - Notification
+  - Integration
+  - Reporting
+  - Security
+  - API
+  - Architecture
+  - Known Issue
+  - Recommendation

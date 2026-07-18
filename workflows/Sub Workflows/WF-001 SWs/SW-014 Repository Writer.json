@@ -1,0 +1,119 @@
+{
+  "name": "SW-014 Repository Writer",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "80a5af68-fb17-4636-9d45-56e835537aa4",
+      "name": "When Executed by WF-001",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        1056,
+        128
+      ],
+      "notes": "Accept all data (passthrough). inputSource MUST be lowercase 'passthrough'; n8n silently ignores camelCase 'passThrough' on import and falls back to defined-fields mode, dropping the caller's payload (and any binary)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Assemble the single-transaction SQL from the bundle. §234: all-or-nothing.\n// NOTE: values are embedded for readability; migrate to parameterized query fields\n// before production (documented risk).\nconst b = $('When Executed by WF-001').first().json;\nconst q = (s)=> String(s==null?'':s).replace(/'/g, \"''\");   // minimal escaping (TEXT columns)\n\n// UUID emitter. q() coerces null/undefined -> '' and every call site wraps the\n// result in quotes, which yields  id=''  for an absent value. Postgres accepts ''\n// for TEXT but REJECTS it for UUID:  invalid input syntax for type uuid: \"\"\n//\n// Every repository `id` is  UUID PRIMARY KEY DEFAULT uuid_generate_v4()  — the\n// database mints it when the column is OMITTED or given the DEFAULT keyword.\n// NULL is NOT usable here: a PRIMARY KEY is implicitly NOT NULL, so an explicit\n// NULL would trade one error for another (\"null value ... violates not-null\").\n// Hence: absent -> the bare token DEFAULT.\n//\n// Returns a complete SQL token (quoted literal, or the bare word DEFAULT), so\n// call sites must NOT wrap it in quotes.\nconst uid = (v) => (v == null || v === '')\n  ? 'DEFAULT'\n  : `'${String(v).replace(/'/g, \"''\")}'`;\n\n// Foreign keys are NOT NULL in every table and must never be absent. Fail loudly\n// rather than emitting DEFAULT (which would silently mint an unrelated UUID) or ''\n// (which is the bug this replaces).\nconst fk = (v, col) => {\n  if (v == null || v === '') {\n    throw new Error(`SW-014: required FK ${col} is ${JSON.stringify(v)} — refusing to `\n      + `emit an empty UUID. Upstream did not supply it.`);\n  }\n  return `'${String(v).replace(/'/g, \"''\")}'`;\n};\nconst stmts = [];\nstmts.push('BEGIN;');\nstmts.push(`UPDATE repository.documents SET status='PROCESSED' WHERE id=${fk(b.documentId,'documentId')};`);\nfor (const m of (b.metadata||[])) stmts.push(`INSERT INTO repository.metadata (document_id,key,value) VALUES (${fk(b.documentId,'documentId')},'${q(m.key)}','${q(m.value)}');`);\nfor (const k of (b.accepted||b.acceptedUnits||[])) stmts.push(`INSERT INTO repository.knowledge_units (id,document_id,content,category,authority,status) VALUES (${uid(k.id)},${fk(b.documentId,'documentId')},'${q(k.statement)}','${q(k.category)}','${q(k.authoritySource)}','Draft');`);\nfor (const e of (b.evidence||[])) stmts.push(`INSERT INTO repository.evidence (id,knowledge_unit_id,excerpt) VALUES (${uid(e.id)},${fk(e.knowledgeUnitId,'evidence.knowledgeUnitId')},'${q(e.excerpt)}');`);\nfor (const c of (b.citations||[])) stmts.push(`INSERT INTO repository.citations (id,evidence_id,document_id,page,section) VALUES (${uid(c.id)},${fk(c.evidenceId,'citations.evidenceId')},${fk(b.documentId,'documentId')},${c.page==null?'NULL':Number(c.page)},'${q(c.section)}');`);\nfor (const ch of (b.chunks||[])) stmts.push(`INSERT INTO repository.retrieval_chunks (id,knowledge_unit_id,chunk_order,content) VALUES (${uid(ch.id)},${fk(ch.knowledgeUnitId,'chunks.knowledgeUnitId')},${Number(ch.ordinal||0)},'${q(ch.text)}');`);\nfor (const em of (b.embeddings||[])) stmts.push(`INSERT INTO repository.embeddings (id,chunk_id,embedding) VALUES (${uid(em.id)},${fk(em.chunkId,'embeddings.chunkId')},'[${(em.vector||[]).join(',')}]');`);\nstmts.push('COMMIT;');\nreturn [{ json: { _txn: stmts.join('\\n'),\n  _counts: { knowledgeUnits:(b.accepted||b.acceptedUnits||[]).length, evidence:(b.evidence||[]).length,\n             citations:(b.citations||[]).length, chunks:(b.chunks||[]).length, embeddings:(b.embeddings||[]).length } } }];"
+      },
+      "id": "b7efa751-3dce-4b69-90bd-b553f800b79e",
+      "name": "Build Transaction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        128
+      ],
+      "notes": "Generates the §234 all-or-nothing transaction. UUID columns are emitted via uid()/fk(), NOT q(): q() coerces null/undefined to '' and every call site quoted the result, so an absent id produced id='' and Postgres raised: invalid input syntax for type uuid: \"\". SW-013's node returns {chunkId, vector, dimensions} with NO id, so em.id was ALWAYS undefined and the embeddings INSERT always failed — after metadata, knowledge_units, evidence, citations and retrieval_chunks had all inserted (those DO mint id: uuidV4() upstream). uid() emits the bare token DEFAULT for an absent PK so uuid_generate_v4() fires; NULL would NOT work, because a PRIMARY KEY is implicitly NOT NULL. fk() throws on an absent foreign key rather than silently minting an unrelated UUID."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json._txn }}",
+        "options": {}
+      },
+      "id": "02b663f9-fe9a-4f2a-a306-9fb949f28097",
+      "name": "Execute Transaction",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1504,
+        128
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "36wScZRTy6L3yvWQ",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Runs BEGIN..COMMIT as ONE query (§234). On error the txn rolls back and the node fails -> WF-001 IF routes to Repository/FAILED. CRIE Postgres credential."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Enrichment: preserve incoming item, add { written, ...counts }.\nconst incoming = $('When Executed by WF-001').first().json;\nreturn [{ json: { ...incoming, written: true, ...$('Build Transaction').first().json._counts } }];"
+      },
+      "id": "7a0ea6e1-dfde-4c6e-abe8-25c40caeae7a",
+      "name": "Emit Counts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1728,
+        128
+      ],
+      "notes": "-> { written:true, ...counts }."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by WF-001": {
+      "main": [
+        [
+          {
+            "node": "Build Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Transaction": {
+      "main": [
+        [
+          {
+            "node": "Execute Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Transaction": {
+      "main": [
+        [
+          {
+            "node": "Emit Counts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "597a6758-40e5-47c4-a81c-d87132b09e04",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eab2f6ae955b6f7992c1cc0c248db40d1634d6ef3cafc789bd70dd7320df16a3"
+  },
+  "nodeGroups": [],
+  "id": "NKf9PFWmldWEJ2dz",
+  "tags": []
+}

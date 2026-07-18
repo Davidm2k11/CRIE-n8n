@@ -1,0 +1,63 @@
+{
+  "createDocument": {
+    "status": "OK",
+    "data": {
+      "documentId": "6e70f5f0-3dd5-49f9-8408-2cd84468a435",
+      "repositoryVersion": "repository-v1",
+      "certification": {
+        "repositoryVersion": "repository-v1",
+        "certified": true,
+        "certificationDate": "2026-07-07T17:13:24.377Z",
+        "qualityScore": 0.99,
+        "checks": {
+          "repositoryStructure": true,
+          "knowledgeQuality": true,
+          "evidenceQuality": true,
+          "citationCompleteness": true,
+          "embeddingAvailability": true,
+          "versionIntegrity": true,
+          "transactionSuccess": true
+        },
+        "certifiedUnits": 2,
+        "totalUnits": 2
+      },
+      "written": {
+        "knowledgeUnits": 2,
+        "evidence": 2,
+        "citations": 2,
+        "chunks": 2,
+        "embeddings": 2
+      }
+    }
+  },
+  "repositoryHealth": {
+    "status": "OK",
+    "data": {
+      "score": 85,
+      "status": "Healthy",
+      "factors": {
+        "certifiedKnowledgePct": 1,
+        "duplicateRate": 1,
+        "missingCitations": 1,
+        "brokenRelationships": 0,
+        "embeddingCoverage": 1,
+        "extractionSuccessRate": 1
+      }
+    }
+  },
+  "repositoryStatistics": {
+    "status": "OK",
+    "data": {
+      "documents": 1,
+      "knowledgeUnits": 2,
+      "evidenceObjects": 2,
+      "citations": 2,
+      "retrievalChunks": 2,
+      "embeddings": 2,
+      "averageQuality": 0.99,
+      "repositorySizeBytes": 0,
+      "averageVersion": 1,
+      "repositoryHealth": 85
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "$comment": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra. Canonical Citation contract per CRIE Enterprise Specification v1.1.1 section 291 (R-06). evidenceId added so serialized citations re-link to their owning Evidence Object; both FKs (evidenceId, documentId) retained; no table change.",
+  "citationId": "",
+  "evidenceId": "",
+  "documentId": "",
+  "page": 0,
+  "paragraph": "",
+  "section": "",
+  "locator": ""
+}

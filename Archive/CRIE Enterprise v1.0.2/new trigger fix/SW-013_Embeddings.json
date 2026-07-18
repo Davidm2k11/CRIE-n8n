@@ -1,0 +1,159 @@
+{
+  "name": "SW-013 Embeddings",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "When Executed by WF-001",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "notes": "Accept all data (passthrough). inputSource MUST be lowercase 'passthrough'; n8n silently ignores camelCase 'passThrough' on import and falls back to defined-fields mode, dropping the caller's payload (and any binary)."
+    },
+    {
+      "id": "load-emb",
+      "name": "Load Embedding Settings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT settings FROM configuration.providers WHERE kind='embedding';"
+      },
+      "notes": "Embedding provider/model/dimensions (R-09=1536). CRIE Postgres credential."
+    },
+    {
+      "id": "build",
+      "name": "Build Embedding Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Build OpenAI embeddings request over chunk texts (batched by config).\nconst settings = $('Load Embedding Settings').first().json.settings;   // jsonb object\nconst chunks = $('When Executed by WF-001').first().json.chunks || [];\nreturn [{ json: { _model: settings.model, _dims: settings.dimensions ?? 1536,\n  input: chunks.map(c=>c.text), _chunkIds: chunks.map(c=>c.id) } }];"
+      },
+      "notes": "Batch chunk texts."
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI Embeddings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json._model, input: $json.input, dimensions: $json._dims }) }}",
+        "options": {
+          "timeout": 45000,
+          "retry": {
+            "retry": {
+              "maxRetries": 3
+            }
+          }
+        }
+      },
+      "notes": "Credentialed embeddings call."
+    },
+    {
+      "id": "shape",
+      "name": "Map + R-09 Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Enrichment: preserve incoming item (incl. full bundle for SW-014), add { embeddings, embeddingDimOk }.\nconst incoming = $('When Executed by WF-001').first().json;\nconst resp = $json;\nconst req = $('Build Embedding Request').first().json;\nconst dims = req._dims;\nconst data = resp.data || [];\nconst embeddings = data.map((d,i)=>({ chunkId: req._chunkIds[i], vector: d.embedding, dimensions: dims }));\nconst embeddingDimOk = embeddings.every(e => Array.isArray(e.vector) && e.vector.length === dims);\nreturn [{ json: { ...incoming, embeddings, embeddingDimOk } }];"
+      },
+      "notes": "-> { embeddings, embeddingDimOk }."
+    }
+  ],
+  "connections": {
+    "When Executed by WF-001": {
+      "main": [
+        [
+          {
+            "node": "Load Embedding Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Embedding Settings": {
+      "main": [
+        [
+          {
+            "node": "Build Embedding Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Embedding Request": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings": {
+      "main": [
+        [
+          {
+            "node": "Map + R-09 Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "workflowVersion": "1.3.0",
+    "sw": "SW-013",
+    "canonicalFn": "sw013_embeddingGenerator",
+    "contract": {
+      "input": "{ chunks:[{id,text}] }",
+      "output": "{ embeddings:[{chunkId,vector,dimensions}], embeddingDimOk }"
+    },
+    "note": "Embeddings via HTTP Request node; R-09 (1536) enforced in the shape node.",
+    "enrichment": "output = {...incomingItem, newResult}; never discards accumulated state",
+    "jsonbFix": "settings is jsonb (object); removed JSON.parse on settings; LLM-content parse retained",
+    "triggerFix": "executeWorkflowTrigger upgraded to 1.1 inputSource=passThrough for binary passthrough",
+    "changelog": [
+      "FIX: executeWorkflowTrigger inputSource was camelCase 'passThrough', which n8n silently ignores on import — the trigger fell back to defined-fields mode and dropped the caller's payload. Corrected to lowercase 'passthrough' (Accept all data)."
+    ]
+  }
+}

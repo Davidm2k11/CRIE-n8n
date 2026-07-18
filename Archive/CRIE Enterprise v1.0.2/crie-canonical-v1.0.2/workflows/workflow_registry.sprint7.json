@@ -1,0 +1,33 @@
+{
+  "license": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra. Unauthorized copying, modification, distribution, or commercial use is prohibited without written permission.",
+  "sprint": 7,
+  "version": "0.8.0",
+  "spec": "CRIE_Enterprise_Specification_v1.1.1.md §623-§625; decisions R-02, R-04",
+  "note": "Sprint-7 activation fragment. Master/shared IDs are immutable after publication (§634). This fragment marks WF-004 and SW-025 as implemented; it introduces no new IDs.",
+  "master": [
+    {
+      "id": "WF-004",
+      "name": "Output Generation",
+      "file": "master/WF-004_Output_Generation.json",
+      "status": "implemented",
+      "sprint": 7,
+      "pipelinePosition": "WF-002 -> WF-003 -> WF-004",
+      "decisions": ["R-02", "R-03", "R-04"]
+    }
+  ],
+  "shared": [
+    {
+      "id": "SW-025",
+      "name": "Google Sheets Writer",
+      "file": "src/output_generation/sw025_sheets_writer.py",
+      "status": "implemented",
+      "sprint": 7,
+      "spec": "§265, §363-§364",
+      "decisions": ["R-08"]
+    }
+  ],
+  "prompts": [
+    { "id": "PR-006", "name": "Proposal Writing", "status": "implemented", "sprint": 7, "spec": "§173", "decisions": ["R-04"] },
+    { "id": "PR-007", "name": "Executive Summary", "status": "implemented", "sprint": 7, "spec": "§173", "decisions": ["R-04"] }
+  ]
+}
