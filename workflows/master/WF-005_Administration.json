@@ -6,18 +6,26 @@
       "title": "Administration",
       "reconciliation": "R-02 (Administration = WF-005; WF-004 is Output Generation)",
       "trigger": "schedule (§157)",
-      "sprint": "Sprint 8",
-      "responsibilities": [
-        "Repository Health (§528)",
-        "Workflow Health (§561)",
-        "Configuration Validation (§327, S8-9)",
-        "Prompt Validation (§157, S8-9)",
-        "Repository Analytics (§533/§560)",
-        "Benchmark Execution (§385)",
-        "Health Checks (§142/§568, R-18 circuit breaker)",
-        "Cost Reports (§198/§564)"
-      ],
       "boundary": "R-17: WF-005 produces/refreshes DASHBOARD DATA only. It renders NO UI. Dashboards are the admin.* views surfaced by the external BI tool.",
+      "slice": "PR-1 slice: only nodes whose backends already exist in migrations 0001-0029 are implemented (Repository Health, Repository Analytics, Cost Report, Orphan Sweep, threshold evaluation, alert persistence). Unbuilt sub-workflows are intentionally omitted (see deferred_dependencies) rather than stubbed with dead executeWorkflow calls.",
+      "aggregation": "Each upstream branch tags its output with a stable _source identifier (repository_health / repository_statistics / cost_report / orphan_sweep). The Evaluate Alert Thresholds Code node aggregates by _source (never by payload shape), which is deterministic and resilient to schema changes. No Merge node is used (this repo has none; the Code-node fan-in is the established pattern).",
+      "failure_isolation": "Only the Orphan Sweep node is failure-isolated (onError: continueRegularOutput) so a sweep failure does not block operational reporting. A reporting-node (Postgres) failure aborts the run by design — it signals a genuine DB fault.",
+      "config_driven": "No hardcoded cadence/thresholds (Principle 7). Reads $vars.CRIE_ADMIN_SCHEDULE_CRON and $vars.CRIE_ALERT_THRESHOLDS.",
+      "rollout": "Staged over two PRs. PR-1 (this) builds the slice and wires the Orphan Sweep by CALLING SW-016 — so WF-005 becomes a second sweep scheduler alongside SW-016's own Schedule Trigger. PR-2 (small follow-up) disables SW-016's Schedule Trigger to reach a single scheduler. The interim dual-scheduler period is intentional; the sweep is append-only/idempotent so no double remediation occurs; temporary duplicate alerts are an accepted trade-off during the staged rollout.",
+      "binding": "The Orphan Sweep node calls SW-016 via executeWorkflow. Imports mint new IDs — RE-BIND this node to SW-016 by ID after import (CLAUDE.md rule 4). waitForSubWorkflow is true so WF-005 receives SW-016's summary before aggregating.",
+      "ci": "WF-005 is deliberately NOT added to ci/active_workflows.txt in PR-1; it is added in PR-2 when it becomes the production scheduler. It can be validated ad-hoc by passing its path explicitly to ci/validate_workflows.py.",
+      "deferred_dependencies": {
+        "note": "Intentionally omitted from the PR-1 slice — backends not yet built. NOT stubbed with dead executeWorkflow calls (the CI validator would flag those). Add when implemented.",
+        "items": [
+          { "ref": "SW-019", "role": "Health Checks fan-out", "impact": "feeds monitoring.health_checks; Repository Health is sparse until built" },
+          { "ref": "SW-026", "role": "Execution Logger", "impact": "no per-run Workflow/AI/Audit log for the admin run" },
+          { "ref": "SW-027", "role": "Telemetry Collector (open/close span)", "impact": "no telemetry span for the admin run" },
+          { "ref": "SW-028", "role": "Notification dispatch", "impact": "alerts are persisted but not pushed (Email/Slack/Teams)" },
+          { "ref": "SW-018", "role": "Output/Prompt Validator", "impact": "no scheduled prompt validation" },
+          { "ref": "UT-000", "role": "Config/Startup Validation", "impact": "no scheduled configuration validation" },
+          { "ref": "UT-006", "role": "Benchmark runner", "impact": "no scheduled benchmark execution" }
+        ]
+      },
       "license": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra."
     }
   },
@@ -35,7 +43,7 @@
           ]
         }
       },
-      "notes": "§157 WF-005 runs on schedule. Cron is config-driven (config/admin.config.yaml -> schedule.cron); NO hardcoded cadence (Principle 7)."
+      "notes": "§157 WF-005 runs on schedule. Cron is config-driven ($vars.CRIE_ADMIN_SCHEDULE_CRON); NO hardcoded cadence (Principle 7)."
     },
     {
       "id": "init",
@@ -52,167 +60,122 @@
           ]
         }
       },
-      "notes": "§159 Standard Workflow Pattern: Trigger -> Initialize -> ... Correlation ID per SW-001."
-    },
-    {
-      "id": "sw027_telemetry_open",
-      "name": "SW-027 Telemetry (open span)",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [640, 400],
-      "parameters": {
-        "workflowId": "SW-027",
-        "options": {}
-      },
-      "notes": "§267 SW-027 Telemetry Collector: opens a telemetry span for the admin run."
-    },
-    {
-      "id": "health_scan",
-      "name": "Health Checks (SW-019 fan-out)",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [860, 200],
-      "parameters": { "workflowId": "SW-019", "options": {} },
-      "notes": "§142/§568 Health Center. Probes each service (n8n, Supabase, Google Drive, Azure OCR, OpenAI, Claude, Embeddings, Storage, Queue System, Repository), writes monitoring.health_checks. R-18: updates breaker_state (Closed/Open/HalfOpen) from failure_count vs §387 threshold; a HalfOpen recovery probe transitions back to Closed. Provider list & thresholds are config-driven."
+      "notes": "§159 Standard Workflow Pattern: Trigger -> Initialize -> fan-out. Correlation ID ties every downstream record (alerts) to this run."
     },
     {
       "id": "repo_health",
-      "name": "Repository Health (§528)",
+      "name": "Repository Health",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [860, 320],
+      "position": [680, 160],
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT repository.repository_health();"
+        "query": "SELECT 'repository_health' AS _source, * FROM repository.repository_health();",
+        "options": {}
       },
-      "notes": "§528 Repository Health Score 0-100 recomputed; §231 lightweight DB function. Business logic remains in n8n where composite; DB function is thin."
+      "credentials": { "postgres": { "id": "36wScZRTy6L3yvWQ", "name": "Postgres account" } },
+      "notes": "§528 Repository Health. repository.repository_health() (migration 0015) returns TABLE(component,state,checked_at) from monitoring.health_checks. Data is sparse until SW-019 (deferred) populates health_checks. Tagged _source='repository_health' for source-keyed aggregation."
     },
     {
       "id": "repo_analytics",
-      "name": "Repository Analytics (§533/§560)",
+      "name": "Repository Analytics",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [860, 440],
+      "position": [680, 300],
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT repository.repository_statistics();"
+        "query": "SELECT 'repository_statistics' AS _source, * FROM repository.repository_statistics();",
+        "options": {}
       },
-      "notes": "§529/§533 statistics + §560 analytics feed admin.vw_repository_dashboard / admin.vw_knowledge_analytics. Views are read-only projections; this node refreshes the underlying source data."
+      "credentials": { "postgres": { "id": "36wScZRTy6L3yvWQ", "name": "Postgres account" } },
+      "notes": "§533/§560 Repository Analytics. repository.repository_statistics() (migration 0015) returns document/KU/evidence/chunk/embedding counts. Tagged _source='repository_statistics'."
     },
     {
       "id": "cost_report",
-      "name": "Cost Report (§198/§564)",
+      "name": "Cost Report",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [860, 560],
+      "position": [680, 440],
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT * FROM admin.vw_cost_intelligence;"
+        "query": "SELECT 'cost_report' AS _source, * FROM admin.vw_cost_intelligence;",
+        "options": {}
       },
-      "notes": "§198 cost monitoring / §564 cost intelligence. Reads the cost view to emit the scheduled Cost Report artifact (Export Center §575)."
+      "credentials": { "postgres": { "id": "36wScZRTy6L3yvWQ", "name": "Postgres account" } },
+      "notes": "§198/§564 Cost Report. admin.vw_cost_intelligence (migration 0024) aggregates monitoring.ai_requests. Sparse until ingestion AI-cost logging populates ai_requests. Tagged _source='cost_report'."
     },
     {
-      "id": "benchmark_exec",
-      "name": "Benchmark Execution (§385)",
+      "id": "orphan_sweep",
+      "name": "Orphan Sweep (SW-016)",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1,
-      "position": [860, 680],
-      "parameters": { "workflowId": "UT-006", "options": {} },
-      "notes": "§385 Benchmark Execution. Sprint 8 SCHEDULES benchmark runs and surfaces results in admin.vw_benchmark_dashboard (§565). Full benchmark SUITE definition and numeric target validation is Sprint 9 scope (§196/§390-406) and is NOT implemented here — this node only triggers the existing runner and records results. Targets are configurable (§565)."
+      "position": [680, 600],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "workflowId": "SW-016",
+        "options": { "waitForSubWorkflow": true }
+      },
+      "notes": "Folds in the Orphan Sweep by calling SW-016 (via its passthrough 'When Called by WF-005' trigger). waitForSubWorkflow=true so WF-005 receives SW-016's run summary before aggregating. onError='continueRegularOutput' so a sweep failure does NOT block operational reporting. REBIND to SW-016 by ID after import (CLAUDE.md rule 4). If the n8n instance predates the node-level 'onError' property, use 'continueOnFail': true instead."
     },
     {
-      "id": "config_validate",
-      "name": "Config Validation (§327, S8-9)",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [1080, 300],
-      "parameters": { "workflowId": "UT-000", "options": {} },
-      "notes": "§327 Configuration Validation, run on schedule (S8-9). Reuses the Startup Validation workflow (UT-000, R-14) checks: required values, URLs valid, credentials available, providers enabled, models configured, feature flags valid. Findings -> alerts."
-    },
-    {
-      "id": "prompt_validate",
-      "name": "Prompt Validation (§157, S8-9)",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [1080, 460],
-      "parameters": { "workflowId": "SW-018", "options": {} },
-      "notes": "§157 Prompt Validation on schedule (S8-9). Verifies PR-001..PR-008 present, versioned (§174), status active, and output-contract-valid via SW-018 Output Validator. Findings -> alerts. No prompt bodies embedded (§608/§612)."
+      "id": "tag_orphan_sweep",
+      "name": "Tag Orphan Sweep",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [920, 600],
+      "parameters": {
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            { "id": "t1", "name": "_source", "value": "orphan_sweep", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Tags SW-016's summary item with _source='orphan_sweep' (executeWorkflow output cannot self-tag in SQL). includeOtherFields=true preserves SW-016's summary fields (remediated_count, etc.)."
     },
     {
       "id": "evaluate_alerts",
-      "name": "Evaluate Alert Thresholds (§387/§569)",
+      "name": "Evaluate Alert Thresholds",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1300, 400],
+      "position": [1180, 400],
       "parameters": {
         "jsChildProcess": false,
-        "jsCode": "// §569 Alert Center + §387 Alert Thresholds.\n// Collect upstream results and raise alerts for: Repository Failure,\n// Workflow Failure, Provider Failure, High Cost, High Latency, Queue Backlog,\n// Repository Health Drop, Low Benchmark Score. Thresholds are CONFIG-DRIVEN\n// (config/admin.config.yaml -> alert_thresholds); NO hardcoded thresholds.\nconst cfg = $vars.CRIE_ALERT_THRESHOLDS ? JSON.parse($vars.CRIE_ALERT_THRESHOLDS) : {};\nconst items = $input.all().map(i => i.json);\nconst alerts = [];\nfunction raise(type, severity, source, message, context){\n  alerts.push({ alert_type: type, severity, source, message, context, correlation_id: $('Initialize').first().json.correlation_id });\n}\n// Repository health drop\nconst rh = items.find(x => x.repository_health !== undefined);\nif (rh && cfg.repository_health_min !== undefined && Number(rh.repository_health) < cfg.repository_health_min) {\n  raise('RepositoryHealthDrop', 'Warning', 'repository', 'Repository health below threshold', { observed: rh.repository_health, threshold: cfg.repository_health_min });\n}\n// High cost (daily)\nconst cost = items.find(x => x.daily_cost !== undefined);\nif (cost && cfg.daily_cost_max !== undefined && Number(cost.daily_cost) > cfg.daily_cost_max) {\n  raise('HighCost', 'Warning', 'cost', 'Daily cost above threshold', { observed: cost.daily_cost, threshold: cfg.daily_cost_max });\n}\n// Provider failure / breaker open\nfor (const x of items) {\n  if (x.service && (x.status === 'Critical' || x.status === 'Offline' || x.breaker_state === 'Open')) {\n    raise('ProviderFailure', x.status === 'Offline' ? 'Critical' : 'Warning', x.service, 'Provider unhealthy or breaker open', { status: x.status, breaker_state: x.breaker_state });\n  }\n}\nreturn alerts.map(a => ({ json: a }));"
+        "jsCode": "// WF-005 — Alert Threshold Evaluation (§387/§569), PR-1 slice.\n// Aggregates the upstream branches by their EXPLICIT _source tag (never by\n// payload shape), so it is deterministic and resilient to schema changes.\n// Thresholds are config-driven ($vars.CRIE_ALERT_THRESHOLDS); no hardcoded\n// values (Principle 7).\nconst cfg = $vars.CRIE_ALERT_THRESHOLDS ? JSON.parse($vars.CRIE_ALERT_THRESHOLDS) : {};\nconst corr = $('Initialize').first().json.correlation_id;\n\n// Group every incoming item by its source identifier.\nconst bySource = {};\nfor (const it of $input.all()) {\n  const j = it.json || {};\n  if (!j._source) continue;\n  (bySource[j._source] = bySource[j._source] || []).push(j);\n}\n\nconst alerts = [];\nconst raise = (alert_type, severity, source, message, context) =>\n  alerts.push({ alert_type, severity, source, message,\n    context: JSON.stringify(context || {}), correlation_id: corr });\n\n// --- Cost (daily) threshold ---\nconst cost = (bySource['cost_report'] || [])[0];\nif (cost && cfg.daily_cost_max !== undefined && cost.daily_cost != null\n    && Number(cost.daily_cost) > Number(cfg.daily_cost_max)) {\n  raise('HighCost', 'Warning', 'cost', 'Daily cost above threshold',\n    { observed: cost.daily_cost, threshold: cfg.daily_cost_max });\n}\n\n// --- Component health: any non-Healthy component ---\nfor (const h of (bySource['repository_health'] || [])) {\n  if (h.state && h.state !== 'Healthy') {\n    raise('ProviderFailure',\n      (h.state === 'Offline' || h.state === 'Critical') ? 'Critical' : 'Warning',\n      h.component || 'unknown', 'Component health degraded',\n      { component: h.component, state: h.state });\n  }\n}\n\n// --- Orphan sweep RUN health (not per-document; the sweep self-alerts those) ---\n// A completed sweep emits a summary carrying remediated_count. Its absence means\n// the sweep branch errored/produced nothing this run -> surface that.\nconst sweepItems = bySource['orphan_sweep'] || [];\nconst sweepCompleted = sweepItems.some(s => typeof s.remediated_count !== 'undefined');\nif (!sweepCompleted) {\n  raise('WorkflowFailure', 'Warning', 'orphan-sweep',\n    'Orphan sweep did not complete on this admin run',\n    { note: 'no sweep summary received (branch errored or empty)' });\n}\n\n// repository_statistics is aggregated in bySource['repository_statistics'] and\n// available for future rules; no threshold is defined for it in the PR-1 slice.\n\nreturn alerts.map(a => ({ json: a }));"
       },
-      "notes": "§387/§569. Emits alert rows (severity required). Thresholds configurable; NO hardcoded values (Principle 7)."
+      "notes": "§387/§569 Alert evaluation + source-keyed aggregator. Reads all four branches via $input.all() and groups by _source. Defensive: tolerates any absent branch without throwing. Emits zero items when nothing breaches (Persist Alerts then simply does not run)."
     },
     {
       "id": "persist_alerts",
       "name": "Persist Alerts",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [1520, 400],
+      "position": [1440, 400],
       "parameters": {
         "operation": "insert",
         "schema": "monitoring",
         "table": "alerts",
         "columns": "alert_type, severity, source, message, context, correlation_id"
       },
-      "notes": "Writes to monitoring.alerts (migration 0026). admin.vw_alert_center surfaces them in the BI tool (§569, R-17)."
-    },
-    {
-      "id": "sw028_notify",
-      "name": "SW-028 Notification",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [1740, 400],
-      "parameters": { "workflowId": "SW-028", "options": {} },
-      "notes": "§268 SW-028. Dispatches Email now; Slack/Teams reserved (future). Triggered on Workflow Failure / Human Review / Repository Certification Failure and on Critical alerts. Providers reached through the Provider Adapter layer."
-    },
-    {
-      "id": "sw026_log",
-      "name": "SW-026 Execution Logger",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [1960, 400],
-      "parameters": { "workflowId": "SW-026", "options": {} },
-      "notes": "§266 SW-026: writes Workflow Log / AI Log / Performance Log / Audit Log for this admin run. Audit Log lands in immutable audit.* (§230/0023)."
-    },
-    {
-      "id": "sw027_telemetry_close",
-      "name": "SW-027 Telemetry (close span)",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [2180, 400],
-      "parameters": { "workflowId": "SW-027", "options": {} },
-      "notes": "§267 SW-027 closes the telemetry span: runtime, tokens, cost, provider, model, retry count, success."
+      "credentials": { "postgres": { "id": "36wScZRTy6L3yvWQ", "name": "Postgres account" } },
+      "notes": "Writes to monitoring.alerts (migration 0026). context is a JSON string cast into the jsonb column. admin.vw_alert_center surfaces these in the BI tool (§569, R-17)."
     }
   ],
   "connections": {
-    "Schedule Trigger":            { "main": [[{ "node": "Initialize", "type": "main", "index": 0 }]] },
-    "Initialize":                  { "main": [[{ "node": "SW-027 Telemetry (open span)", "type": "main", "index": 0 }]] },
-    "SW-027 Telemetry (open span)": { "main": [[
-        { "node": "Health Checks (SW-019 fan-out)", "type": "main", "index": 0 },
-        { "node": "Repository Health (§528)", "type": "main", "index": 0 },
-        { "node": "Repository Analytics (§533/§560)", "type": "main", "index": 0 },
-        { "node": "Cost Report (§198/§564)", "type": "main", "index": 0 },
-        { "node": "Benchmark Execution (§385)", "type": "main", "index": 0 }
+    "Schedule Trigger": { "main": [[{ "node": "Initialize", "type": "main", "index": 0 }]] },
+    "Initialize": { "main": [[
+      { "node": "Repository Health", "type": "main", "index": 0 },
+      { "node": "Repository Analytics", "type": "main", "index": 0 },
+      { "node": "Cost Report", "type": "main", "index": 0 },
+      { "node": "Orphan Sweep (SW-016)", "type": "main", "index": 0 }
     ]] },
-    "Health Checks (SW-019 fan-out)": { "main": [[{ "node": "Config Validation (§327, S8-9)", "type": "main", "index": 0 }]] },
-    "Repository Health (§528)":       { "main": [[{ "node": "Config Validation (§327, S8-9)", "type": "main", "index": 0 }]] },
-    "Config Validation (§327, S8-9)": { "main": [[{ "node": "Prompt Validation (§157, S8-9)", "type": "main", "index": 0 }]] },
-    "Prompt Validation (§157, S8-9)": { "main": [[{ "node": "Evaluate Alert Thresholds (§387/§569)", "type": "main", "index": 0 }]] },
-    "Cost Report (§198/§564)":        { "main": [[{ "node": "Evaluate Alert Thresholds (§387/§569)", "type": "main", "index": 0 }]] },
-    "Benchmark Execution (§385)":     { "main": [[{ "node": "Evaluate Alert Thresholds (§387/§569)", "type": "main", "index": 0 }]] },
-    "Repository Analytics (§533/§560)": { "main": [[{ "node": "Evaluate Alert Thresholds (§387/§569)", "type": "main", "index": 0 }]] },
-    "Evaluate Alert Thresholds (§387/§569)": { "main": [[{ "node": "Persist Alerts", "type": "main", "index": 0 }]] },
-    "Persist Alerts":              { "main": [[{ "node": "SW-028 Notification", "type": "main", "index": 0 }]] },
-    "SW-028 Notification":         { "main": [[{ "node": "SW-026 Execution Logger", "type": "main", "index": 0 }]] },
-    "SW-026 Execution Logger":     { "main": [[{ "node": "SW-027 Telemetry (close span)", "type": "main", "index": 0 }]] }
+    "Repository Health": { "main": [[{ "node": "Evaluate Alert Thresholds", "type": "main", "index": 0 }]] },
+    "Repository Analytics": { "main": [[{ "node": "Evaluate Alert Thresholds", "type": "main", "index": 0 }]] },
+    "Cost Report": { "main": [[{ "node": "Evaluate Alert Thresholds", "type": "main", "index": 0 }]] },
+    "Orphan Sweep (SW-016)": { "main": [[{ "node": "Tag Orphan Sweep", "type": "main", "index": 0 }]] },
+    "Tag Orphan Sweep": { "main": [[{ "node": "Evaluate Alert Thresholds", "type": "main", "index": 0 }]] },
+    "Evaluate Alert Thresholds": { "main": [[{ "node": "Persist Alerts", "type": "main", "index": 0 }]] }
   },
   "settings": { "executionOrder": "v1", "saveDataSuccessExecution": "all", "saveExecutionProgress": true },
   "pinData": {}
