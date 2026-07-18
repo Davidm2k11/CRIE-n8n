@@ -1,0 +1,22 @@
+# ci/active_workflows.txt — the CRIE "active workflow set" that CI statically validates.
+#
+# SINGLE SOURCE OF TRUTH for which workflows the validator checks. The CI job and
+# both local runners (run_local.ps1 / run_local.sh) invoke validate_workflows.py
+# with NO path arguments, so they all read THIS file. To bring a new production
+# workflow under validation, add a line below — do NOT edit ci.yml or the runners.
+#
+# Rules:
+#   - One glob (or explicit path) per line, relative to the repo root.
+#   - '#' comments and blank lines are ignored.
+#   - Recursive '**' is supported.
+#
+# EXCLUDED BY DESIGN: the roadmap skeletons WF-002 / WF-003 / WF-004 / WF-005 are
+# intentional placeholder stubs, not production workflows; validating them as if
+# they were would raise false failures (dead nodes / no trigger path). Add them
+# here once they become real, wired workflows.
+
+# WF-001 Knowledge Ingestion (the one implemented master workflow)
+workflows/master/WF-001*.json
+
+# All shipped sub-workflows (WF-001 SWs + SW-016 Orphan Sweep under WF-005 SWs)
+workflows/subworkflows/**/*.json
