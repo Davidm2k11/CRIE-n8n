@@ -156,10 +156,32 @@
         "operation": "insert",
         "schema": "monitoring",
         "table": "alerts",
-        "columns": "alert_type, severity, source, message, context, correlation_id"
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "alert_type": "={{ $json.alert_type }}",
+            "severity": "={{ $json.severity }}",
+            "source": "={{ $json.source }}",
+            "message": "={{ $json.message }}",
+            "context": "={{ $json.context }}",
+            "correlation_id": "={{ $json.correlation_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "alert_type", "displayName": "alert_type", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "severity", "displayName": "severity", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "source", "displayName": "source", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "message", "displayName": "message", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "context", "displayName": "context", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "correlation_id", "displayName": "correlation_id", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
       },
       "credentials": { "postgres": { "id": "36wScZRTy6L3yvWQ", "name": "Postgres account" } },
-      "notes": "Writes to monitoring.alerts (migration 0026). context is a JSON string cast into the jsonb column. admin.vw_alert_center surfaces these in the BI tool (§569, R-17)."
+      "notes": "Writes to monitoring.alerts (migration 0026). Uses the n8n Postgres v2.5 resourceMapper (mappingMode=defineBelow) so each column carries an explicit ={{ $json.<col> }} expression — a bare comma-separated column-name string does NOT survive import on n8n 2.5+ (columns render blank). context is a JSON string cast into the jsonb column. admin.vw_alert_center surfaces these in the BI tool (§569, R-17)."
     }
   ],
   "connections": {
