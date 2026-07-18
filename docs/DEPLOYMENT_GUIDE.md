@@ -46,11 +46,25 @@ environment:
   - NODE_OPTIONS=--max-old-space-size=6144
   # Concurrency 1 avoids per-worker heap contention during large-doc ingestion:
   - QUEUE_WORKER_CONCURRENCY=1
+  # WF-005 (Administration) schedule cadence. n8n Variables ($vars) are an
+  # Enterprise feature; CRIE targets Community, so schedule-trigger config is read
+  # from the ENVIRONMENT ($env). A Schedule Trigger cron is evaluated before any
+  # node runs and therefore cannot come from the DB configuration schema like the
+  # rest of CRIE config. REQUIRED for WF-005 to schedule (no hardcoded default —
+  # Principle 7). Set on the main/scheduler instance:
+  - CRIE_ADMIN_SCHEDULE_CRON=0 * * * *
 ```
 
 > The 6144/concurrency-1 settings are the validated working configuration for
 > large documents in v1.0. The per-batch memory refactor (design already written)
 > is deferred to post-v1.0 and will remove the need for the raised heap.
+
+> **CRIE does not require Enterprise n8n.** The shipped pipeline reads all runtime
+> configuration from the PostgreSQL `configuration` schema (R-08), not n8n
+> Variables. The one exception is the WF-005 Schedule Trigger cron, which — being
+> evaluated before any node runs — cannot query the DB and is supplied via
+> `$env.CRIE_ADMIN_SCHEDULE_CRON` above. `$env` access in expressions must be
+> permitted (default; ensure `N8N_BLOCK_ENV_ACCESS_IN_NODE` is not `true`).
 
 ## 3. Credentials (in n8n)
 

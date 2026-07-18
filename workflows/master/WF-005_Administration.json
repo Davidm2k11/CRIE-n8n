@@ -10,7 +10,7 @@
       "slice": "PR-1 slice: only nodes whose backends already exist in migrations 0001-0029 are implemented (Repository Health, Repository Analytics, Cost Report, Orphan Sweep, threshold evaluation, alert persistence). Unbuilt sub-workflows are intentionally omitted (see deferred_dependencies) rather than stubbed with dead executeWorkflow calls.",
       "aggregation": "Each upstream branch tags its output with a stable _source identifier (repository_health / repository_statistics / cost_report / orphan_sweep). The Evaluate Alert Thresholds Code node aggregates by _source (never by payload shape), which is deterministic and resilient to schema changes. No Merge node is used (this repo has none; the Code-node fan-in is the established pattern).",
       "failure_isolation": "Only the Orphan Sweep node is failure-isolated (onError: continueRegularOutput) so a sweep failure does not block operational reporting. A reporting-node (Postgres) failure aborts the run by design — it signals a genuine DB fault.",
-      "config_driven": "No hardcoded cadence/thresholds (Principle 7). Reads $vars.CRIE_ADMIN_SCHEDULE_CRON and $vars.CRIE_ALERT_THRESHOLDS.",
+      "config_driven": "No hardcoded cadence (Principle 7). The Schedule Trigger cron is read from the n8n ENVIRONMENT ($env.CRIE_ADMIN_SCHEDULE_CRON): trigger-time config cannot be loaded from the DB configuration schema (it is evaluated before any node runs), and n8n Variables ($vars) are Enterprise-only while CRIE targets Community. Alert thresholds are still read from $vars.CRIE_ALERT_THRESHOLDS as a KNOWN follow-up: architecturally they belong in the DB configuration schema (R-08, the WF-001 'Load Config Cache' pattern), NOT $env. On Community that $vars read resolves to empty, so cost-threshold alerts are inert (health/sweep alerts unaffected) until the DB-config migration lands.",
       "rollout": "Staged over two PRs. PR-1 (this) builds the slice and wires the Orphan Sweep by CALLING SW-016 — so WF-005 becomes a second sweep scheduler alongside SW-016's own Schedule Trigger. PR-2 (small follow-up) disables SW-016's Schedule Trigger to reach a single scheduler. The interim dual-scheduler period is intentional; the sweep is append-only/idempotent so no double remediation occurs; temporary duplicate alerts are an accepted trade-off during the staged rollout.",
       "binding": "The Orphan Sweep node calls SW-016 via executeWorkflow. Imports mint new IDs — RE-BIND this node to SW-016 by ID after import (CLAUDE.md rule 4). waitForSubWorkflow is true so WF-005 receives SW-016's summary before aggregating.",
       "ci": "WF-005 is deliberately NOT added to ci/active_workflows.txt in PR-1; it is added in PR-2 when it becomes the production scheduler. It can be validated ad-hoc by passing its path explicitly to ci/validate_workflows.py.",
@@ -39,11 +39,11 @@
       "parameters": {
         "rule": {
           "interval": [
-            { "field": "cronExpression", "expression": "={{ $vars.CRIE_ADMIN_SCHEDULE_CRON }}" }
+            { "field": "cronExpression", "expression": "={{ $env.CRIE_ADMIN_SCHEDULE_CRON }}" }
           ]
         }
       },
-      "notes": "§157 WF-005 runs on schedule. Cron is config-driven ($vars.CRIE_ADMIN_SCHEDULE_CRON); NO hardcoded cadence (Principle 7)."
+      "notes": "§157 WF-005 runs on schedule. Cron is config-driven via the n8n ENVIRONMENT variable $env.CRIE_ADMIN_SCHEDULE_CRON (NOT $vars — n8n Variables are an Enterprise feature and CRIE targets self-hosted Community). A Schedule Trigger cron is evaluated BEFORE any node runs, so it cannot be loaded from the DB configuration schema like the rest of CRIE config; $env is the correct plane for trigger-time config, consistent with the docker-compose runtime env. Set CRIE_ADMIN_SCHEDULE_CRON on the n8n main/scheduler instance. NO hardcoded cadence (Principle 7)."
     },
     {
       "id": "init",
