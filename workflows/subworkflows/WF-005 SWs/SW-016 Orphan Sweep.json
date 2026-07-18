@@ -1,0 +1,103 @@
+{
+  "name": "SW-016 Orphan Sweep",
+  "meta": {
+    "crie": {
+      "workflow_id": "SW-016",
+      "title": "Orphan-Document Sweep",
+      "purpose": "Safety net for worker crashes (OOM/restart) that skip WF-001's in-workflow HUMAN_REVIEW paths, leaving a document silently in-progress. On schedule, detects documents whose latest processing_history row is PENDING beyond a configurable staleness threshold and remediates them exactly as WF-001 does on a handled failure — using append-only operations only.",
+      "trigger": "schedule (§157) — standalone for now",
+      "reconciliation": "Deferred operational safeguard (PROJECT_STATUS §Deferred; DEPLOYMENT_GUIDE §6; RELEASE_CHECKLIST production MUST).",
+      "remediation": "Decision (approved): APPEND-ONLY. Never modifies an existing processing_history row. Sets repository.documents.status='HUMAN_REVIEW', INSERTs a new terminal FAILED processing_history row, INSERTs the monitoring.alerts row. All performed atomically by monitoring.sweep_orphaned_documents() (migration 0029).",
+      "config_driven": "No hardcoded cadence/threshold/batch (Principle 7). Reads $vars.CRIE_ORPHAN_SWEEP_CRON, $vars.CRIE_ORPHAN_SWEEP_STALE_MINUTES, $vars.CRIE_ORPHAN_SWEEP_BATCH_LIMIT. The || fallbacks are documented safety defaults; production SHOULD set the vars.",
+      "folding_into_wf005": "Designed to become a WF-005 sub-workflow with minimal change. It already carries a passthrough executeWorkflowTrigger ('When Called by WF-005') wired into the same Initialize node. To fold in: (1) add an Execute Workflow node in WF-005 pointing at this workflow by ID, (2) optionally deactivate the Schedule Trigger here so WF-005's schedule is the single cadence. No node-graph changes required.",
+      "license": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra."
+    }
+  },
+  "nodes": [
+    {
+      "id": "trigger_schedule",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "={{ $vars.CRIE_ORPHAN_SWEEP_CRON }}" }
+          ]
+        }
+      },
+      "notes": "§157 runs on schedule. Cron is config-driven ($vars.CRIE_ORPHAN_SWEEP_CRON); NO hardcoded cadence (Principle 7)."
+    },
+    {
+      "id": "trigger_execute",
+      "name": "When Called by WF-005",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 480],
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "notes": "Drop-in path for folding into WF-005 as a sub-workflow. inputSource:'passthrough' (LOWERCASE t) per the frozen SW I/O contract. Never fires during standalone scheduled runs; the Schedule Trigger never fires during an executeWorkflow call — so no double-run."
+    },
+    {
+      "id": "init",
+      "name": "Initialize",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [440, 380],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "correlation_id", "value": "={{ $execution.id }}", "type": "string" },
+            { "id": "a2", "name": "workflow_id", "value": "SW-016", "type": "string" },
+            { "id": "a3", "name": "started_at", "value": "={{ $now.toISO() }}", "type": "string" },
+            { "id": "a4", "name": "staleMinutes", "value": "={{ Number($vars.CRIE_ORPHAN_SWEEP_STALE_MINUTES) || 30 }}", "type": "number" },
+            { "id": "a5", "name": "batchLimit", "value": "={{ Number($vars.CRIE_ORPHAN_SWEEP_BATCH_LIMIT) || 100 }}", "type": "number" }
+          ]
+        }
+      },
+      "notes": "§159 Trigger -> Initialize. Operational parameters are config-driven ($vars); the || fallbacks (30 min, 100) are documented safety defaults, NOT the source of truth (Principle 7)."
+    },
+    {
+      "id": "sweep",
+      "name": "Sweep Orphaned Documents",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 380],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT document_id, stuck_stage, minutes_stuck, alert_id FROM monitoring.sweep_orphaned_documents({{ $json.staleMinutes }}, {{ $json.batchLimit }});",
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "36wScZRTy6L3yvWQ",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Calls the atomic sweep function (migration 0029). It performs the approved append-only remediation and returns one row per remediated document (empty on a clean run). NOTE ON {{ }}: these are INTENDED n8n interpolations of INTEGER config values (same pattern as WF-001's HUMAN_REVIEW node) — they resolve before the SQL runs. This is NOT a forbidden literal {{token}} passthrough placeholder (e.g. {{ocr}}); no literal braces reach Postgres. alwaysOutputData:true so the Summarize node runs even when nothing was remediated. Bind the CRIE Postgres credential (service_role/owner) on import."
+    },
+    {
+      "id": "summarize",
+      "name": "Summarize Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 380],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// Build a single run-summary item. On a clean sweep the Postgres node\n// emits one empty item (alwaysOutputData), so filter to real remediations.\nconst rows = $input.all().map(i => i.json).filter(r => r && r.document_id);\nconst init = $('Initialize').first().json;\nreturn [{ json: {\n  workflow_id: 'SW-016',\n  correlation_id: init.correlation_id,\n  started_at: init.started_at,\n  stale_minutes: init.staleMinutes,\n  batch_limit: init.batchLimit,\n  remediated_count: rows.length,\n  remediated: rows\n} }];"
+      },
+      "notes": "Emits a run summary (remediated_count + per-document detail). Real events are already persisted in monitoring.alerts by the sweep function and surfaced by admin.vw_alert_center — this node is the workflow-level heartbeat, kept dependency-free so the sweep stays standalone (no SW-026/SW-028 needed)."
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": { "main": [[{ "node": "Initialize", "type": "main", "index": 0 }]] },
+    "When Called by WF-005": { "main": [[{ "node": "Initialize", "type": "main", "index": 0 }]] },
+    "Initialize": { "main": [[{ "node": "Sweep Orphaned Documents", "type": "main", "index": 0 }]] },
+    "Sweep Orphaned Documents": { "main": [[{ "node": "Summarize Run", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveDataSuccessExecution": "all", "saveExecutionProgress": true },
+  "pinData": {}
+}

@@ -1,9 +1,10 @@
 # CRIE v1.0 — Definitive Migration Chain
 
 Reproduces the CRIE database from an empty PostgreSQL 16 (Supabase) instance.
-Apply **in numeric order, 0001 → 0028**, then the two post-migration data steps.
+Apply **in numeric order, 0001 → 0028** (the frozen `v1.0` baseline), then any
+**post-v1.0** migrations (`0029+`), then the two post-migration data steps.
 All migrations are additive and idempotent (`CREATE ... IF NOT EXISTS`, guarded
-`INSERT`s), so a partial replay is safe to re-run.
+`INSERT`s / `CREATE OR REPLACE`), so a partial replay is safe to re-run.
 
 ## Order
 
@@ -37,6 +38,12 @@ All migrations are additive and idempotent (`CREATE ... IF NOT EXISTS`, guarded
 | 0026 | health_alert_center | health/alert views |
 | 0027 | benchmark_persistence | benchmark tables |
 | 0028 | benchmark_views | benchmark views |
+
+### Post-v1.0 (additive, applied after the frozen chain)
+
+| # | File | Establishes |
+|---|------|-------------|
+| 0029 | orphan_sweep | `monitoring.vw_orphaned_documents` + `monitoring.sweep_orphaned_documents(stale_minutes, limit)` (Orphan-Document Sweep; append-only remediation) |
 
 ## Post-migration data steps (order matters)
 

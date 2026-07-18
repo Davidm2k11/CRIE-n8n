@@ -78,10 +78,17 @@ Import every JSON in `workflows/`. Then follow `docs/WORKFLOW_INVENTORY.md`:
 
 ## 6. Operational safeguards to enable
 
-- **Orphan-document sweep** (deferred build): a scheduled check that flips any
-  `processing_history` row stuck `PENDING` beyond N minutes with no `COMPLETED`
-  successor to `HUMAN_REVIEW`. Protects against worker crashes (OOM, restart)
-  that skip the in-workflow failure paths. Ship early in operations.
+- **Orphan-document sweep** (built — migration `0029` + `SW-016 Orphan Sweep`): a
+  scheduled check that detects any document stuck `PENDING` beyond a configurable
+  threshold with no terminal successor and routes it to human review, protecting
+  against worker crashes (OOM, restart) that skip the in-workflow failure paths.
+  Remediation is **append-only**: it sets `repository.documents.status='HUMAN_REVIEW'`,
+  **appends** a new `FAILED` `processing_history` row, and raises a `monitoring.alerts`
+  row (it does not modify the stuck row — that table is append-only). To enable:
+  apply migration `0029`, import `SW-016 Orphan Sweep`, bind its Postgres credential,
+  set `CRIE_ORPHAN_SWEEP_CRON` / `CRIE_ORPHAN_SWEEP_STALE_MINUTES` (default 30) /
+  `CRIE_ORPHAN_SWEEP_BATCH_LIMIT` (default 100), and activate it. Ship early in
+  operations.
 - **BI layer**: point Metabase/Power BI/Grafana at the `admin.*` views.
 
 ## 7. Known-good runtime facts (do not "fix" these)

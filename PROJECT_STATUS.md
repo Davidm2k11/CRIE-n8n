@@ -33,6 +33,19 @@ freeze lives in [`CANONICAL_BASELINE.md`](CANONICAL_BASELINE.md).
 - **Validated runtime config:** worker heap `--max-old-space-size=6144`,
   `QUEUE_WORKER_CONCURRENCY=1`, queue mode, filesystem binary storage.
 
+## Delivered after v1.0
+
+Additive work built on top of the frozen `v1.0` baseline (the `v1.0` tag itself
+remains `0001–0028` + the ACTIVE workflow set; these ship as new artifacts).
+
+- **Orphan-document sweep** (branch `feature/orphan-sweep`) — migration
+  `0029_orphan_sweep.sql` (detector view + `monitoring.sweep_orphaned_documents`)
+  and the standalone `SW-016 Orphan Sweep` workflow. Append-only remediation of
+  documents stuck `PENDING` after a worker crash; config-driven; designed to fold
+  into WF-005 as a sub-workflow. See
+  [`docs/IMPLEMENTATION_NOTES.md`](docs/IMPLEMENTATION_NOTES.md) and
+  [`docs/DEPLOYMENT_GUIDE.md`](docs/DEPLOYMENT_GUIDE.md) §6.
+
 ## Roadmap (not yet built)
 
 Present in `workflows/master/` as **skeletons only** (small placeholder JSON,
@@ -50,8 +63,6 @@ define direction, not delivered functionality.
 
 - Per-batch sub-workflow memory refactor (design complete; removes the need for
   the raised heap).
-- Orphan-document sweep (recommended to ship early in operations — see
-  [`docs/DEPLOYMENT_GUIDE.md`](docs/DEPLOYMENT_GUIDE.md) §6).
 - Adaptive extraction density.
 - CI ephemeral-Postgres migration-replay test.
 - §406 operational sign-offs (UAT, backup/restore drills, live monitoring,
@@ -65,7 +76,8 @@ define direction, not delivered functionality.
   [`docs/IMPLEMENTATION_NOTES.md`](docs/IMPLEMENTATION_NOTES.md).
 - **Large-document heap** under the current single-execution batch loop, mitigated
   by the documented heap/concurrency config until the per-batch refactor lands.
-- **Silent `PENDING` documents** on worker crash until the orphan sweep ships.
+- **Silent `PENDING` documents** on worker crash — addressed post-v1.0 by the
+  orphan sweep (below); mitigated in any environment where it is scheduled.
 
 ## Gate before starting WF-002
 

@@ -49,7 +49,9 @@ before starting WF-002.
       queue mode, filesystem binary.
 - [ ] BI layer reads `admin.*` views.
 - [ ] **Orphan-document sweep** scheduled (recommended MUST for production; a worker
-      crash otherwise leaves a document silently `PENDING`).
+      crash otherwise leaves a document silently `PENDING`). Artifacts delivered
+      post-v1.0: migration `0029` + `SW-016 Orphan Sweep`. Remaining env action —
+      apply `0029`, import/bind/activate `SW-016`, set the `CRIE_ORPHAN_SWEEP_*` vars.
 
 ## 6. Regression guards (recommended before WF-002)
 
