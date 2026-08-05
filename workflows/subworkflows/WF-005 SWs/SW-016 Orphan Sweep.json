@@ -44,7 +44,7 @@
       "id": "init",
       "name": "Initialize",
       "type": "n8n-nodes-base.set",
-      "typeVersion": 3,
+      "typeVersion": 3.4,
       "position": [440, 380],
       "parameters": {
         "assignments": {
@@ -57,7 +57,7 @@
           ]
         }
       },
-      "notes": "§159 Trigger -> Initialize. Operational parameters are config-driven ($vars); the || fallbacks (30 min, 100) are documented safety defaults, NOT the source of truth (Principle 7)."
+      "notes": "§159 Trigger -> Initialize. Operational parameters are config-driven ($vars); the || fallbacks (30 min, 100) are documented safety defaults, NOT the source of truth (Principle 7). typeVersion MUST be >= 3.3 for the 'assignments' parameter shape used here: n8n silently DISCARDS an unrecognised parameter on import, so declaring typeVersion 3 left this node a no-op passthrough — staleMinutes/batchLimit were never assigned and the sweep ran as monitoring.sweep_orphaned_documents(undefined, undefined), failing with 'column \"undefined\" does not exist'. Same defect class as the camelCase 'passThrough' trigger trap."
     },
     {
       "id": "sweep",

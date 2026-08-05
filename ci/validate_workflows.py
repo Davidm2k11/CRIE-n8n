@@ -340,6 +340,41 @@ def validate(path):
                     f"failure. mode:'id' is the pinned form (CANONICAL_BASELINE rule 4)."
                 )
 
+    # ---- 8: Set node parameter shape must match its declared typeVersion ----
+    # n8n SILENTLY DISCARDS a parameter the declared typeVersion does not know. A Set node
+    # authored with the v3.3+ 'assignments' shape but declaring typeVersion 3 imports with
+    # parameters reduced to {options} — a no-op PASSTHROUGH that emits its input unchanged.
+    # Nothing errors; the workflow just runs with every assigned field missing. Observed on
+    # n8n 2.29.9: SW-016's Initialize never set staleMinutes/batchLimit, so the sweep ran as
+    # sweep_orphaned_documents(undefined, undefined); WF-005's Initialize never set
+    # correlation_id, so alerts persisted with correlation_id NULL.
+    # Same defect class as the camelCase 'passThrough' trigger trap (check 5).
+    SET_SHAPES = (
+        # (parameter key, minimum typeVersion, maximum exclusive, label)
+        ("assignments", 3.3, None, "assignments (v3.3+)"),
+        ("fields",      3.0, 3.3,  "fields (v3.0-3.2)"),
+        ("values",      1.0, 3.0,  "values (v1-v2)"),
+    )
+    for n in nodes:
+        if n.get("type") != "n8n-nodes-base.set":
+            continue
+        params = n.get("parameters", {}) or {}
+        tv = float(n.get("typeVersion", 1))
+        for key, lo, hi, label in SET_SHAPES:
+            if key not in params:
+                continue
+            if tv < lo or (hi is not None and tv >= hi):
+                findings.append(
+                    f"SET SCHEMA   [{n['name']}] declares typeVersion {n.get('typeVersion')} but uses "
+                    f"the '{key}' parameter — the {label} shape. n8n DISCARDS the unrecognised "
+                    f"parameter on import, leaving a SILENT NO-OP passthrough: every field this node "
+                    f"claims to set is missing downstream, with no error. "
+                    f"Set typeVersion to {lo} or higher"
+                    + (f" (below {hi})" if hi is not None else "")
+                    + " to match the shape."
+                )
+            break
+
     # ---- 7: multi-parent nodes that read the whole input (WARNING, not an error) ----
     # A node with multiple incoming parents executes ONCE PER INCOMING BRANCH, so
     # $input.all() returns only the CURRENT branch's items. Code that reasons across

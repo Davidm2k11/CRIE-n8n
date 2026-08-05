@@ -35,6 +35,15 @@ surface at runtime:
   than assuming every use is wrong. See `docs/IMPLEMENTATION_NOTES.md`,
   "Execution semantics".
 
+- **Set nodes whose parameter shape does not match their declared `typeVersion`** — n8n silently
+  *discards* a parameter the declared version does not know, so a Set node authored with the
+  v3.3+ `assignments` shape but declaring `typeVersion: 3` imports as a **no-op passthrough**:
+  every field it claims to set is simply missing downstream, with no error anywhere. Found in
+  production on n8n 2.29.9 — `SW-016`'s `Initialize` never set `staleMinutes`/`batchLimit`, so
+  the sweep ran as `sweep_orphaned_documents(undefined, undefined)`, and `WF-005`'s `Initialize`
+  never set `correlation_id`, so alerts persisted with `correlation_id NULL`. The check maps each
+  shape (`assignments` → ≥3.3, `fields` → 3.0–3.2, `values` → <3.0) to its permitted version range.
+
 ### Finding severities
 `ERROR` fails the build. `WARN` is potentially unsafe and needs author confirmation;
 `NOTE` is informational. Neither advisory level changes the exit code.
