@@ -23,6 +23,14 @@ Catches, BEFORE deployment, the class of defect that otherwise only surfaces at 
      (e.g. SW-013 still referencing 'Load OCR Provider Settings') indicate a copied
      workflow whose references were not retargeted.
 
+  5. UNRESOLVED SUB-WORKFLOW REFERENCES
+     Every executeWorkflow node must carry a BINDABLE workflowId. A symbolic CRIE label
+     ("SW-016") is a roadmap-skeleton placeholder, not an n8n workflow ID: n8n cannot
+     resolve it, and when the node also carries onError/continueOnFail the failure is
+     SILENT — the caller's own input passes straight through as if it were the child's
+     output. That is the WF-005 PR-1 defect and the same class as the documented #1
+     deployment failure (binding drift). Empty/missing bindings are caught too.
+
 Exit code 0 = clean, 1 = findings. Intended for CI and for the pre-deployment gate.
 
 Usage:
@@ -59,6 +67,9 @@ NO_PROMPT = {"SW-005", "SW-013", "SW-014"}
 
 NODE_REF = re.compile(r"\$\(\s*['\"](?P<name>[^'\"]+)['\"]\s*\)")
 PROMPT_REF = re.compile(r"PR-\d{3}")
+# A CRIE workflow LABEL (what the roadmap skeletons use as a placeholder binding).
+# Never a real n8n workflow ID — those are 16-char nanoids (e.g. 'YZqANTvkl1N97JiM').
+CRIE_LABEL = re.compile(r"^(SW|WF|UT)-\d{3}$")
 
 
 TRIGGER_TYPES = (
@@ -274,6 +285,89 @@ def validate(path):
                 f"typeVersion >= 1.1 (found {tv})"
             )
 
+    # ---- 6: executeWorkflow binding is RESOLVABLE ----
+    # An unbindable reference is invisible at import time and, when the node carries
+    # onError/continueOnFail, invisible at RUN time too: n8n emits the caller's own
+    # input in place of the child's output. Downstream logic then reasons about the
+    # wrong payload (WF-005 PR-1: "Orphan sweep did not complete" while SW-016 was
+    # in fact healthy). Bindings are pinned by ID per CANONICAL_BASELINE rule 4.
+    for n in nodes:
+        if n.get("type") != "n8n-nodes-base.executeWorkflow":
+            continue
+        wid = n.get("parameters", {}).get("workflowId")
+        swallows = n.get("onError") in ("continueRegularOutput", "continueErrorOutput") \
+            or n.get("continueOnFail") is True
+        silently = (" The node also swallows errors (onError/continueOnFail), so this "
+                    "fails SILENTLY at runtime and the caller's own input flows "
+                    "downstream as if it were the child's output.") if swallows else ""
+
+        if wid is None or wid == "":
+            findings.append(
+                f"EXEC BINDING [{n['name']}] has no workflowId — the sub-workflow call "
+                f"cannot resolve.{silently}"
+            )
+        elif isinstance(wid, str):
+            if CRIE_LABEL.match(wid.strip()):
+                findings.append(
+                    f"EXEC BINDING [{n['name']}] workflowId is the symbolic placeholder "
+                    f"'{wid}' — a CRIE label, NOT an n8n workflow ID (those are 16-char "
+                    f"nanoids). n8n can never resolve it.{silently} Pin the node by ID "
+                    f"(workflowId: {{__rl:true, mode:'id', value:'<id>'}})."
+                )
+            else:
+                findings.append(
+                    f"NOTE         [{n['name']}] workflowId is a bare string '{wid}' "
+                    f"(legacy typeVersion-1 shape). Cannot be verified statically; prefer "
+                    f"the resource-locator form {{__rl:true, mode:'id', value:'<id>'}}."
+                )
+        elif isinstance(wid, dict):
+            mode, val = wid.get("mode"), (wid.get("value") or "")
+            if not val:
+                findings.append(
+                    f"EXEC BINDING [{n['name']}] workflowId resource-locator has an empty "
+                    f"'value' — nothing to bind to.{silently}"
+                )
+            elif CRIE_LABEL.match(str(val).strip()):
+                findings.append(
+                    f"EXEC BINDING [{n['name']}] workflowId value is the symbolic placeholder "
+                    f"'{val}', not an n8n workflow ID.{silently}"
+                )
+            elif mode == "list":
+                findings.append(
+                    f"NOTE         [{n['name']}] workflowId binds with mode:'list' "
+                    f"(name-cached). If the instance holds more than one workflow of that "
+                    f"name, this can resolve to a STALE copy — the documented #1 deployment "
+                    f"failure. mode:'id' is the pinned form (CANONICAL_BASELINE rule 4)."
+                )
+
+    # ---- 7: multi-parent nodes that read the whole input (WARNING, not an error) ----
+    # A node with multiple incoming parents executes ONCE PER INCOMING BRANCH, so
+    # $input.all() returns only the CURRENT branch's items. Code that reasons across
+    # branches — especially about the ABSENCE of another branch's data — is unsound.
+    # This is a WARNING, not an error: for a loop-back or a mutually-exclusive
+    # convergence only one parent ever delivers, and $input.all() is then legitimate.
+    # The author must confirm which case applies.
+    parent_count = {}
+    for tgt, srcs in preds.items():
+        parent_count[tgt] = len(srcs)
+    for n in nodes:
+        if parent_count.get(n["name"], 0) < 2:
+            continue
+        blob = node_blob(n)
+        used = [tok for tok in ("$input.all(", "$items(") if tok in blob]
+        if not used:
+            continue
+        findings.append(
+            f"WARN         [{n['name']}] has {parent_count[n['name']]} incoming parents and "
+            f"calls {', '.join(used)}. A multi-parent node executes ONCE PER INCOMING "
+            f"BRANCH, so this returns only the CURRENT branch's items — not all branches "
+            f"merged. Safe if the parents are mutually exclusive (IF branches, loop-back, "
+            f"alternate triggers); UNSOUND if they run in parallel and the code reasons "
+            f"across branches (especially about another branch's absence). Verify which "
+            f"applies; for parallel fan-in use $json / branch-local logic, or an explicit "
+            f"Merge. See docs/IMPLEMENTATION_NOTES.md 'Execution semantics'."
+        )
+
     # ---- 3 & 4: prompt reference correctness ----
     prompts_used = set()
     for n in nodes:
@@ -365,15 +459,24 @@ def main():
     print("CRIE workflow static validation")
     print(f"active set from: {source}")
     print("=" * 72)
+    # NOTE = informational, WARN = potentially unsafe (author must confirm). Neither
+    # fails the build; only hard findings do.
+    advisory = ("NOTE", "WARN")
     for p in paths:
         name, ncount, findings = validate(p)
-        errs = [f for f in findings if not f.startswith("NOTE")]
+        errs = [f for f in findings if not f.startswith(advisory)]
+        warns = [f for f in findings if f.startswith("WARN")]
         status = "OK" if not errs else f"{len(errs)} ERROR(S)"
-        if not errs and findings: status = f"OK ({len(findings)} note(s))"
+        if not errs and findings:
+            bits = []
+            if warns: bits.append(f"{len(warns)} warning(s)")
+            notes = len(findings) - len(errs) - len(warns)
+            if notes: bits.append(f"{notes} note(s)")
+            status = f"OK ({', '.join(bits)})"
         print(f"\n{name}  ({ncount} nodes) — {status}")
         for f in findings:
             print(f"   x {f}")
-        total += len([f for f in findings if not f.startswith("NOTE")])
+        total += len(errs)
 
     print("\n" + "=" * 72)
     if total:
