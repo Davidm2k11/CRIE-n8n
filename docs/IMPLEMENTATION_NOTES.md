@@ -180,10 +180,11 @@ input instead of the child's output (manifesting as a false HUMAN_REVIEW).
     remediated set, and produces the identical audit trail as the scheduled path.
 - **BI layer:** point Metabase/Power BI/Grafana at the `admin.*` views.
 
-## Recommended CI guards (deferred)
+## CI guards
 
-- Ephemeral-Postgres **migration replay** — catches forward-reference defects
-  invisible to text tests.
-- `pgcheck.py` over all prompt/repair SQL (adjacent-literal + `{{` guard).
-- `validate_workflows.py` over workflow JSON (node-ref, trigger passthrough,
-  prompt-ref, IF-schema, 3VL-INSERT, taxonomy-enum checks).
+- **Shipped** — `validate_workflows.py` over the active workflow set (node-ref,
+  trigger passthrough, prompt-ref, IF-schema, executeWorkflow binding, Set-node
+  parameter/typeVersion). See [`ci/README.md`](../ci/README.md).
+- **Shipped** — ephemeral-Postgres **migration replay**; catches forward-reference
+  defects invisible to text tests.
+- **Deferred** — `pgcheck.py` over all prompt/repair SQL (adjacent-literal + `{{` guard).
