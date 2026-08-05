@@ -26,6 +26,46 @@ These look like bugs but are deliberate. Changing them breaks the pipeline.
   so binary handling order matters. These constraints are already encoded in the
   workflows — preserve them.
 
+## Execution semantics — multi-parent nodes
+
+**A node with multiple incoming parents executes once per incoming branch, not once
+with the branches merged.** `$input.all()` returns only the items of the branch the
+current run belongs to.
+
+**Verified empirically on n8n 2.29.9** with an isolated probe (four Set branches —
+one of them two nodes deep — fanning into a single Code node under
+`executionOrder: "v1"`). The Code node executed **4 times**, `runIndex` 0–3, each run
+reporting `itemCount: 1` and exactly one source. Every upstream node executed once. No
+wave-grouping occurred: the deeper branch still produced its own separate run.
+
+**The invariant that follows:** *a node with multiple parents may depend only on the
+current branch's item.* Cross-branch aggregation requires an explicit aggregation
+mechanism (a Merge node); it cannot be achieved by fanning several branches into one
+Code node.
+
+**The correct authoring pattern** is already the shipped one. WF-001's `Emit FAILED`
+has six parents and reads **`$json` only** — each failure path normalizes its own
+payload upstream (`failStage`, `error`) and the shared terminal node merely emits it.
+Follow that shape: branch-local semantics in the shared node, normalization upstream.
+
+**Why this matters beyond wrong answers.** A rule that infers something from the
+*absence* of another branch's data is unsound by construction — it will fire on every
+run that is not that branch's run. This produced WF-005's false "Orphan sweep did not
+complete" alert on three of every four runs. Where the converging node performs a
+**write** rather than an evaluation, the same semantics cause duplicate writes instead:
+`WF-004`'s `SW-025 Google Sheets Writer` and `Assemble Proposal Package` are both fed by
+two parallel parents today and will need this treatment before WF-004 is built.
+
+Every other multi-parent node in the repository is safe, and for a second reason worth
+knowing: they are **alternative-path convergences**, not parallel fan-ins — mutually
+exclusive IF branches (`Emit FAILED`, `SW-020`), loop-backs (`poll() — wait`,
+`more batches?`, `Regenerate (retry)`), or exclusive triggers (`SW-016 Initialize`).
+Only one parent ever delivers, so no repeated run occurs regardless of input access.
+
+`ci/validate_workflows.py` reports a **warning** when a multi-parent node's code calls
+`$input.all()` — a warning rather than an error because loop-back and exclusive
+convergences make legitimate use of it.
+
 ## Workflow binding (the #1 deployment failure)
 
 Imports mint **new** workflow IDs, so a `mode:"list"` / cached-name binding can
