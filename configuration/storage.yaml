@@ -1,0 +1,57 @@
+# storage.yaml — Storage configuration (authored source of truth, R-08). §310
+#
+# CANONICAL. This file is the authored source of truth for storage configuration.
+# Design documents describe intent; where a design document and this file differ,
+# THIS FILE WINS. Decision D2.
+#
+# Two distinct concerns, deliberately separated — they were previously conflated
+# under a single `provider` key, which is how the design documents and the
+# configuration came to disagree:
+#
+#   ingestion — where source documents ARRIVE from (watched, downloaded)
+#   storage   — where the original file is PERSISTED, exactly once, and is
+#               thereafter referenced rather than carried
+#
+# NO SECRETS IN THIS FILE. Credentials live in the n8n credential store. The
+# storage service key is never committed and is never encoded in an object key.
+
+ingestion:
+  provider: google_drive        # source of incoming documents (§320); WF-001's trigger
+  bucket: crie-repository       # Drive folder watched for new documents
+  archiveBucket: crie-archive   # Drive folder for processed/archived source documents
+  temporaryFolder: crie-tmp
+
+storage:
+  provider: supabase_storage
+  bucketPattern: crie-documents-{env}   # env in {dev, staging, prod}
+  visibility: private                   # no public read; access via signed URL only
+  retentionPolicy: standard
+
+  prefixes:
+    originals: originals/               # reserves room for sibling prefixes
+                                        # (derived/, thumbnails/, redacted/)
+
+  keyTemplate: "originals/{yyyy}/{mm}/{dd}/{documentId}/{sha256}.{ext}"
+
+  # Rules the key template does not express on its own. Each exists because the
+  # obvious reading is wrong; do not simplify without re-reading the reason.
+  keyRules:
+    lowercase: true
+    dateSource: documents.uploaded_at
+      # NOT wall-clock at upload time. Wall-clock gives a re-ingested document a
+      # second key under a new date partition, orphaning the first object and
+      # breaking the "same content maps to the same object" property.
+    documentIdSource: generated-before-key
+      # Decision D4. The key embeds documentId, so the id must exist before the
+      # key is computed; registration accepts an explicit id rather than relying
+      # on the database DEFAULT.
+    extensionSource: downloaded-bytes
+      # NOT the Google Drive mimeType carried through the pipeline. WF-001
+      # downloads with googleFileConversion, so Google-native documents arrive as
+      # application/pdf while Drive still reports application/vnd.google-apps.*.
+
+  # Out of scope for the object-storage workstream (decision D5). A documents row
+  # cannot currently be deleted: the ON DELETE CASCADE from
+  # monitoring.processing_history fires that table's append-only trigger, which
+  # raises. Object-side deletion only; database erasure is a separate decision.
+  erasure: out-of-scope

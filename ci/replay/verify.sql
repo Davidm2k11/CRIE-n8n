@@ -80,6 +80,55 @@ BEGIN
     RAISE NOTICE 'OK: migration 0029 orphan-sweep objects present';
 END $$;
 
+-- 6. Migration 0030 (document storage): five NULLABLE columns + lookup index,
+--    and no data written. document_blobs is DEFERRED (decision D3) and is
+--    therefore deliberately NOT asserted here.
+DO $$
+DECLARE
+    v_missing TEXT;
+    v_notnull TEXT;
+    v_rows    BIGINT;
+BEGIN
+    SELECT string_agg(c.col, ', ')
+      INTO v_missing
+      FROM (VALUES ('storage_key'), ('storage_bucket'), ('byte_size'),
+                   ('content_type'), ('stored_at')) AS c(col)
+     WHERE NOT EXISTS (
+             SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'repository'
+                AND table_name   = 'documents'
+                AND column_name  = c.col);
+    IF v_missing IS NOT NULL THEN
+        RAISE EXCEPTION 'missing repository.documents storage columns (migration 0030): %', v_missing;
+    END IF;
+
+    -- All five MUST be nullable: the migration has to be safe on existing rows.
+    SELECT string_agg(column_name, ', ')
+      INTO v_notnull
+      FROM information_schema.columns
+     WHERE table_schema = 'repository'
+       AND table_name   = 'documents'
+       AND column_name IN ('storage_key', 'storage_bucket', 'byte_size',
+                           'content_type', 'stored_at')
+       AND is_nullable <> 'YES';
+    IF v_notnull IS NOT NULL THEN
+        RAISE EXCEPTION 'migration 0030 storage columns must be NULLABLE: %', v_notnull;
+    END IF;
+
+    IF to_regclass('repository.idx_documents_storage_key') IS NULL THEN
+        RAISE EXCEPTION 'missing idx_documents_storage_key (migration 0030)';
+    END IF;
+
+    -- The migration is schema-only; it must not populate anything.
+    SELECT count(*) INTO v_rows
+      FROM repository.documents WHERE storage_key IS NOT NULL;
+    IF v_rows <> 0 THEN
+        RAISE EXCEPTION 'migration 0030 must write no data, found % row(s) with storage_key', v_rows;
+    END IF;
+
+    RAISE NOTICE 'OK: migration 0030 storage columns present, nullable, indexed, no data written';
+END $$;
+
 \echo '=================================================='
 \echo 'verify.sql: ALL POST-REPLAY ASSERTIONS PASSED'
 \echo '=================================================='
