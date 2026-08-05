@@ -1,0 +1,241 @@
+{
+  "name": "SW-029 Persist Original",
+  "meta": {
+    "crie": {
+      "workflow_id": "SW-029",
+      "title": "Persist Original to Object Storage",
+      "purpose": "Store the original uploaded file exactly once in object storage and record the reference on repository.documents. After this workflow, callers carry only { documentId, sha256, storageKey, correlationId } and never the binary.",
+      "roadmap": "Object Storage PR-2. New artifact: nothing frozen is touched and WF-001 does NOT call this yet — the ingestion cutover is PR-4.",
+      "identifier": "Numbered SW-029, the lowest free id. SW-017 (used illustratively in the roadmap) is already WF-002's Metadata Filter, and SW-016 is already used twice in this repository (Orphan Sweep and WF-002's Requirement Analyzer). A third collision was not created.",
+      "contract": {
+        "input": "{ documentId (UUID, REQUIRED — the row must already exist), correlationId } plus the original file as BINARY on property 'data'.",
+        "output": "{ documentId, sha256, storageKey, storageBucket, contentType, byteSize, storedAt, correlationId, skippedUpload }",
+        "precondition": "repository.documents row for documentId EXISTS. This workflow writes the five storage columns (0030); it does not register documents. Decision D4: the caller generates documentId before the key is computed, because the key embeds it."
+      },
+      "decisions": "D1 columns from migration 0030. D3 document_blobs deferred, so no integrity row is written here. D4 documentId is caller-generated and arrives as input. D5 erasure is out of scope — this workflow never deletes.",
+      "findings_applied": {
+        "H2": "The key's date partition is derived from repository.documents.uploaded_at, NEVER from wall-clock at upload time. Wall-clock would give a re-ingested document a second key under a new date and orphan the first object.",
+        "H3": "An existing storage_key is trusted ONLY after the object is verified present. A non-null key whose object is missing falls through to upload rather than silently skipping.",
+        "H6": "Byte size is gated against CRIE_STORAGE_MAX_BYTES before upload, so an oversized file fails here rather than after the expensive OCR step. Unset means no gate.",
+        "M2": "Verify-on-write: after upload the stored object's reported size is compared to the uploaded byte count. Full re-hash verification belongs to the storage-integrity job (PR-6), not here.",
+        "probeE": "content_type and the key's {ext} are derived from MAGIC BYTES of the downloaded file, never from the Google Drive mimeType. WF-001 downloads with googleFileConversion, so Google-native documents arrive as application/pdf while Drive still reports vnd.google-apps.*.",
+        "probeG": "No signed URL is minted here, so none can reach the execution log. When SW-005 mints one (PR-3) it must be minted and consumed inside a single node — a URL emitted in any node's output is persisted in the executions table."
+      },
+      "runtime_config": "Bucket and endpoint are read from the n8n ENVIRONMENT ($env.CRIE_STORAGE_ENDPOINT, $env.CRIE_STORAGE_BUCKET, $env.CRIE_STORAGE_MAX_BYTES). configuration/storage.yaml remains the authored source of truth (R-08, decision D2); deployment resolves {env} from it and sets these variables, exactly as it already does for $env.CRIE_ADMIN_SCHEDULE_CRON. No secret is read from $env: the storage key is an n8n CREDENTIAL, bound on import.",
+      "credentials_on_import": "BIND BEFORE USE. The two HTTP nodes declare generic header auth with NO credential attached, matching the Azure Document Intelligence pattern — attach the Supabase storage credential after import. The Postgres nodes use the existing CRIE Postgres credential (service_role/owner).",
+      "testing_status": "PENDING INFRASTRUCTURE. The upload and verify paths cannot be executed until a private bucket and a storage credential exist. Everything not requiring them is implemented and statically validated.",
+      "license": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra."
+    }
+  },
+  "nodes": [
+    {
+      "id": "trigger_execute",
+      "name": "When Called by WF-001",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 400],
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "notes": "inputSource:'passthrough' (LOWERCASE t) per the frozen SW I/O contract — the camelCase variant is silently ignored on import and drops the caller's payload including binary. Receives { documentId, correlationId } plus the original file as binary property 'data'."
+    },
+    {
+      "id": "load_row",
+      "name": "Load Document Row",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 400],
+      "alwaysOutputData": true,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id::text AS document_id, sha256, to_char(uploaded_at AT TIME ZONE 'UTC', 'YYYY/MM/DD') AS uploaded_partition, storage_key, storage_bucket FROM repository.documents WHERE id = '{{ $json.documentId }}';",
+        "options": {}
+      },
+      "credentials": { "postgres": { "id": "36wScZRTy6L3yvWQ", "name": "Postgres account" } },
+      "notes": "Reads the authoritative sha256 and the uploaded_at date partition (H2) for the caller's documentId. NOTE ON {{ }}: this is an INTENDED n8n interpolation of a UUID that resolves before the SQL runs (same pattern as SW-016's integer config) — it is NOT a forbidden literal {{token}} placeholder; no literal braces reach Postgres. alwaysOutputData:true so a MISSING row still reaches Prepare Object, which raises a clear error instead of the workflow ending silently on zero items."
+    },
+    {
+      "id": "reattach",
+      "name": "Re-attach Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// MANDATORY Postgres-before-binary-consumer pattern: the Postgres node above\n// replaced the item and dropped item.binary. Re-establish it ONCE, by node\n// reference from the trigger, directly before the consumer.\nreturn [{ json: $json, binary: $('When Called by WF-001').first().binary }];"
+      },
+      "notes": "Binary is re-established exactly once, at the point of use, per the Workflow Engineering Guidelines. Do not iterate this; iterative re-attachment is a symptom, not a fix."
+    },
+    {
+      "id": "prepare",
+      "name": "Prepare Object",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 400],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// SW-029 — compute the storage key and validate the bytes before any upload.\n//\n// Content type and extension come from MAGIC BYTES, never from the Drive\n// mimeType (finding: probe E). The date partition comes from\n// documents.uploaded_at, never from wall-clock (finding H2).\n\nconst trig = $('When Called by WF-001').first().json;\nconst row  = $json || {};\n\nif (!row.document_id) {\n  throw new Error('SW-029: no repository.documents row for documentId=' +\n    (trig.documentId || '(missing)') + '. Register the document before persisting its original.');\n}\n\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'data');\nif (!buf || buf.length === 0) {\n  throw new Error('SW-029: binary property \"data\" is empty or absent — the original file did not cross the workflow boundary.');\n}\nconst byteSize = buf.length;\n\n// --- magic-byte sniff -> { contentType, ext } ---\nconst hex = (n) => buf.slice(0, n).toString('hex').toUpperCase();\nlet contentType = null, ext = null;\nif (buf.slice(0, 4).toString('latin1') === '%PDF')            { contentType = 'application/pdf';  ext = 'pdf'; }\nelse if (hex(8) === '89504E470D0A1A0A')                        { contentType = 'image/png';        ext = 'png'; }\nelse if (hex(3) === 'FFD8FF')                                  { contentType = 'image/jpeg';       ext = 'jpg'; }\nelse if (hex(4) === '49492A00' || hex(4) === '4D4D002A')        { contentType = 'image/tiff';       ext = 'tiff'; }\n\nif (!contentType) {\n  throw new Error('SW-029: unsupported or unrecognised file type (first bytes ' + hex(8) +\n    '). Refusing to store an object whose extension cannot be derived from its content.');\n}\n\n// --- size gate (H6): fail here, not after the expensive OCR step ---\nconst maxBytes = Number($env.CRIE_STORAGE_MAX_BYTES) || 0;\nif (maxBytes > 0 && byteSize > maxBytes) {\n  throw new Error('SW-029: file is ' + byteSize + ' bytes, above CRIE_STORAGE_MAX_BYTES=' + maxBytes + '.');\n}\n\nconst endpoint = ($env.CRIE_STORAGE_ENDPOINT || '').replace(/\\/+$/, '');\nconst bucket   = $env.CRIE_STORAGE_BUCKET || '';\nif (!endpoint || !bucket) {\n  throw new Error('SW-029: CRIE_STORAGE_ENDPOINT and CRIE_STORAGE_BUCKET must be set on the n8n instance (resolved from configuration/storage.yaml).');\n}\n\n// --- key: originals/{yyyy}/{mm}/{dd}/{documentId}/{sha256}.{ext} ---\nconst storageKey = 'originals/' + row.uploaded_partition + '/' + row.document_id + '/' + row.sha256 + '.' + ext;\n\nreturn [{\n  json: {\n    correlationId: trig.correlationId || null,\n    documentId: row.document_id,\n    sha256: row.sha256,\n    storageKey,\n    storageBucket: bucket,\n    storageEndpoint: endpoint,\n    contentType,\n    byteSize,\n    hasExistingKey: !!row.storage_key,\n    existingStorageKey: row.storage_key || null\n  },\n  binary: $input.first().binary\n}];"
+      },
+      "notes": "Derives contentType/ext from magic bytes, gates size, and builds the key from uploaded_at + documentId + sha256. Raises rather than storing anything it cannot name correctly — an object keyed with the wrong extension is worse than a failed ingestion. Carries the binary forward for the upload node."
+    },
+    {
+      "id": "if_existing",
+      "name": "Existing key?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1160, 400],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.hasExistingKey }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "notes": "H3: a non-null storage_key is NOT trusted on its own. True -> verify the object really exists; false -> upload."
+    },
+    {
+      "id": "verify_existing",
+      "name": "Verify Existing Object",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 260],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "url": "={{ $json.storageEndpoint }}/storage/v1/object/info/{{ $json.storageBucket }}/{{ $json.existingStorageKey }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": { "response": { "response": { "fullResponse": true, "neverError": true } } }
+      },
+      "notes": "H3: does the object behind the recorded key actually exist? onError + neverError so a 404 becomes data rather than a failure — a missing object must fall through to upload, not abort. BIND the Supabase storage credential on import."
+    },
+    {
+      "id": "if_object_ok",
+      "name": "Existing object present?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1640, 260],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": { "type": "number", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "notes": "True -> the stored original is intact; skip the upload (the duplicate path). False -> the key is stale and the object is gone; upload it."
+    },
+    {
+      "id": "upload",
+      "name": "Upload Original",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 560],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Prepare Object').item.json.storageEndpoint }}/storage/v1/object/{{ $('Prepare Object').item.json.storageBucket }}/{{ $('Prepare Object').item.json.storageKey }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-upsert", "value": "true" },
+            { "name": "content-type", "value": "={{ $('Prepare Object').item.json.contentType }}" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "notes": "Stores the original exactly once. x-upsert:true makes re-uploading identical bytes to the same key a no-op instead of a 409 — required for retries to be safe (PR-0 probe C will confirm the exact semantics). Body is the binary itself; the bytes are never base64-expanded into JSON. BIND the Supabase storage credential on import."
+    },
+    {
+      "id": "verify_stored",
+      "name": "Verify Stored Object",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1640, 560],
+      "parameters": {
+        "url": "={{ $('Prepare Object').item.json.storageEndpoint }}/storage/v1/object/info/{{ $('Prepare Object').item.json.storageBucket }}/{{ $('Prepare Object').item.json.storageKey }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "notes": "M2 verify-on-write. Reads back the stored object's metadata; the next node asserts the size matches what was uploaded. Full re-hash verification is the storage-integrity job (PR-6), deliberately not done here. Unlike the existing-object check this node does NOT swallow errors: a failure to read back what we just wrote must fail the workflow."
+    },
+    {
+      "id": "assert_size",
+      "name": "Assert Stored Size",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1880, 560],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// M2 verify-on-write: the object we just stored must report the size we sent.\nconst prep = $('Prepare Object').item.json;\nconst info = $json || {};\nconst reported = Number(info.size ?? (info.metadata && info.metadata.size));\n\nif (!Number.isFinite(reported)) {\n  throw new Error('SW-029: could not read a size back for ' + prep.storageKey + ' — refusing to record an unverified storage_key.');\n}\nif (reported !== prep.byteSize) {\n  throw new Error('SW-029: stored size ' + reported + ' != uploaded size ' + prep.byteSize +\n    ' for ' + prep.storageKey + ' — refusing to record a storage_key for a corrupt object.');\n}\n\nreturn [{ json: { ...prep, verifiedBytes: reported } }];"
+      },
+      "notes": "Fails closed. If the read-back does not match, no storage_key is written — a document with a NULL key is recoverable; a document pointing at a corrupt object is not."
+    },
+    {
+      "id": "write_columns",
+      "name": "Write Storage Columns",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2120, 560],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE repository.documents SET storage_key = '{{ $json.storageKey }}', storage_bucket = '{{ $json.storageBucket }}', byte_size = {{ $json.byteSize }}, content_type = '{{ $json.contentType }}', stored_at = now() WHERE id = '{{ $json.documentId }}' RETURNING id::text AS document_id, storage_key, storage_bucket, byte_size, content_type, stored_at;",
+        "options": {}
+      },
+      "credentials": { "postgres": { "id": "36wScZRTy6L3yvWQ", "name": "Postgres account" } },
+      "notes": "Writes the five columns added by migration 0030. UPDATE only — this workflow never registers a document (decision D4: the caller owns documentId) and never deletes (decision D5). RETURNING makes the persisted values observable to the caller. NOTE ON {{ }}: intended n8n interpolation, resolved before the SQL runs."
+    },
+    {
+      "id": "return_summary",
+      "name": "Return to Caller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2360, 400],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// Terminal node. Reached by two MUTUALLY EXCLUSIVE paths (uploaded / skipped),\n// so it reads only $json — the current branch's item — and never reaches across\n// branches. See docs/IMPLEMENTATION_NOTES.md 'Execution semantics'.\nconst prep = $('Prepare Object').item.json;\nconst j = $json || {};\nconst skipped = !j.stored_at;\n\nreturn [{ json: {\n  workflow_id: 'SW-029',\n  correlationId: prep.correlationId,\n  documentId: prep.documentId,\n  sha256: prep.sha256,\n  storageKey: skipped ? prep.existingStorageKey : j.storage_key,\n  storageBucket: skipped ? prep.storageBucket : j.storage_bucket,\n  contentType: skipped ? prep.contentType : j.content_type,\n  byteSize: skipped ? prep.byteSize : Number(j.byte_size),\n  storedAt: skipped ? null : j.stored_at,\n  skippedUpload: skipped\n} }];"
+      },
+      "notes": "Emits the reference tuple { documentId, sha256, storageKey, correlationId } plus the stored-object facts. From here the caller carries only this — never the binary."
+    }
+  ],
+  "connections": {
+    "When Called by WF-001": { "main": [[{ "node": "Load Document Row", "type": "main", "index": 0 }]] },
+    "Load Document Row": { "main": [[{ "node": "Re-attach Binary", "type": "main", "index": 0 }]] },
+    "Re-attach Binary": { "main": [[{ "node": "Prepare Object", "type": "main", "index": 0 }]] },
+    "Prepare Object": { "main": [[{ "node": "Existing key?", "type": "main", "index": 0 }]] },
+    "Existing key?": { "main": [
+      [{ "node": "Verify Existing Object", "type": "main", "index": 0 }],
+      [{ "node": "Upload Original", "type": "main", "index": 0 }]
+    ] },
+    "Verify Existing Object": { "main": [[{ "node": "Existing object present?", "type": "main", "index": 0 }]] },
+    "Existing object present?": { "main": [
+      [{ "node": "Return to Caller", "type": "main", "index": 0 }],
+      [{ "node": "Upload Original", "type": "main", "index": 0 }]
+    ] },
+    "Upload Original": { "main": [[{ "node": "Verify Stored Object", "type": "main", "index": 0 }]] },
+    "Verify Stored Object": { "main": [[{ "node": "Assert Stored Size", "type": "main", "index": 0 }]] },
+    "Assert Stored Size": { "main": [[{ "node": "Write Storage Columns", "type": "main", "index": 0 }]] },
+    "Write Storage Columns": { "main": [[{ "node": "Return to Caller", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveDataSuccessExecution": "all", "saveExecutionProgress": true },
+  "pinData": {}
+}
