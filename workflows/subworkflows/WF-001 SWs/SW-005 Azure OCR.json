@@ -255,6 +255,75 @@
         -144
       ],
       "notes": "Emits ocr=null + ocrError so WF-001's node-if-ocr routes to the §154 HUMAN_REVIEW path. Reads the item directly; no run-history lookup."
+    },
+    {
+      "id": "ocr_input_mode",
+      "name": "ocr input mode?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        900,
+        180
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "m1",
+              "leftValue": "={{ ($('Load OCR Provider Settings').first().json.settings.ocrInputMode === 'signedUrl') && !!$('When Executed by WF-001').first().json.storageKey }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "notes": "PR-3 dual-path selector. TRUE only when BOTH hold: configuration.providers(kind='ocr').settings.ocrInputMode = 'signedUrl' AND the caller supplied a storageKey. The key is ABSENT today, so this evaluates FALSE and the workflow behaves exactly as before — the fallback is the default and rollback is simply removing the setting. Dual-input per accepted finding H1: SW-005 accepts the legacy binary payload or the new storageKey and selects on availability, so it stays correct before and after the WF-001 cutover."
+    },
+    {
+      "id": "build_analyze_request",
+      "name": "Build Analyze Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        120
+      ],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// Assembles the isolated child's input. Carries NO binary and NO secret.\nconst trig = $('When Executed by WF-001').first().json;\nconst cfg  = $('Load OCR Provider Settings').first().json.settings || {};\nreturn [{ json: {\n  storageKey: trig.storageKey,\n  azureEndpoint: cfg.endpoint,\n  azureModel: cfg.model,\n  signedUrlTtlSeconds: Number(cfg.signedUrlTtlSeconds) || 300,\n  correlationId: trig.correlationId || null\n} }];"
+      },
+      "notes": "Builds the child's JSON input from the trigger and the OCR provider settings. TTL is config-driven (settings.signedUrlTtlSeconds), defaulting to 300s."
+    },
+    {
+      "id": "call_sw030",
+      "name": "SW-030 Analyze via Signed URL",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1380,
+        120
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "w0JADswpeOxRtPEZ",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "notes": "Calls SW-030, which mints the signed URL, submits to Azure and returns ONLY { statusCode, headers }. SW-030 persists no execution data, so the signed URL never reaches any execution record. Pinned by ID (CANONICAL_BASELINE rule 4) — RE-PIN after importing into another instance. waitForSubWorkflow:true so the submit response is available before capture pollUrl runs."
     }
   ],
   "pinData": {},
@@ -285,7 +354,7 @@
       "main": [
         [
           {
-            "node": "submit() — POST Analyze",
+            "node": "ocr input mode?",
             "type": "main",
             "index": 0
           }
@@ -377,6 +446,46 @@
         [
           {
             "node": "shapeResult() — OCR failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ocr input mode?": {
+      "main": [
+        [
+          {
+            "node": "Build Analyze Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "submit() — POST Analyze",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Analyze Request": {
+      "main": [
+        [
+          {
+            "node": "SW-030 Analyze via Signed URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SW-030 Analyze via Signed URL": {
+      "main": [
+        [
+          {
+            "node": "submit() — capture pollUrl",
             "type": "main",
             "index": 0
           }
