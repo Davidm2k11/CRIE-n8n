@@ -324,6 +324,70 @@
         }
       },
       "notes": "Calls SW-030, which mints the signed URL, submits to Azure and returns ONLY { statusCode, headers }. SW-030 persists no execution data, so the signed URL never reaches any execution record. Pinned by ID (CANONICAL_BASELINE rule 4) — RE-PIN after importing into another instance. waitForSubWorkflow:true so the submit response is available before capture pollUrl runs."
+    },
+    {
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "sf1",
+              "leftValue": "={{ !!$('When Executed by WF-001').first().json.storageKey }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "b1f0aa10-5c21-4f5a-9a2e-0d1e5f7a1001",
+      "name": "storage fallback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -3990,
+        -60
+      ],
+      "notes": "PR-4. Reached when the signed-URL path is NOT selected. TRUE when the caller supplied a storageKey: after the WF-001 cutover no binary crosses the boundary, so the legacy binary submit would have nothing to send and the ocrInputMode switch would be unusable as a rollback. The original decision named download-then-submit as the fallback under object storage; this is it. FALSE keeps the legacy binary path byte-identical for a caller that supplies binary and no storageKey (finding H1)."
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.CRIE_STORAGE_ENDPOINT }}/storage/v1/object/{{ $env.CRIE_STORAGE_BUCKET }}/{{ $('When Executed by WF-001').first().json.storageKey }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "b1f0aa10-5c21-4f5a-9a2e-0d1e5f7a1002",
+      "name": "Fetch Object from Storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3820,
+        -140
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "qc5C9NOR2HwCTifh",
+          "name": "Supabase Storage (service_role)"
+        }
+      },
+      "notes": "PR-4 fallback. Downloads the stored original with the service-role credential and emits it as binary 'data' — exactly the shape submit() already consumes, so the submit/poll/normalize chain is untouched. No signed URL is minted here, so nothing URL-shaped can reach an execution record (probe G)."
     }
   ],
   "pinData": {},
@@ -463,7 +527,7 @@
         ],
         [
           {
-            "node": "submit() — POST Analyze",
+            "node": "storage fallback?",
             "type": "main",
             "index": 0
           }
@@ -486,6 +550,35 @@
         [
           {
             "node": "submit() — capture pollUrl",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "storage fallback?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Object from Storage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "submit() — POST Analyze",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Object from Storage": {
+      "main": [
+        [
+          {
+            "node": "submit() — POST Analyze",
             "type": "main",
             "index": 0
           }

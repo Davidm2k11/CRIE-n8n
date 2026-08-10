@@ -250,9 +250,7 @@
         "workflowId": {
           "__rl": true,
           "value": "o4UfkBXiCsAWjZzr",
-          "mode": "list",
-          "cachedResultUrl": "/workflow/o4UfkBXiCsAWjZzr",
-          "cachedResultName": "SW-005 Azure OCR"
+          "mode": "id"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -269,7 +267,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        2736,
+        3196,
         -192
       ],
       "notes": "After import, open this node and select 'SW-005 Azure OCR' from the Workflow dropdown (canonical SW-005). The value is intentionally blank — n8n assigns the real workflow ID on your instance; it cannot be embedded in the exported JSON."
@@ -302,7 +300,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        2960,
+        3420,
         -192
       ]
     },
@@ -317,7 +315,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        3184,
+        3644,
         16
       ],
       "credentials": {
@@ -337,7 +335,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3184,
+        3644,
         -256
       ],
       "notes": "OCR validation is PARAGRAPH-FIRST against the normalized model. A DOCX legitimately has zero pages, so validity is judged on paragraphs (the universal unit). Page confidence is checked only when the format paginates natively."
@@ -353,7 +351,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        3392,
+        3852,
         -256
       ],
       "credentials": {
@@ -369,9 +367,7 @@
         "workflowId": {
           "__rl": true,
           "value": "cEPltYyB4xJcNblT",
-          "mode": "list",
-          "cachedResultUrl": "/workflow/cEPltYyB4xJcNblT",
-          "cachedResultName": "SW-007 LLM Metadata"
+          "mode": "id"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -388,7 +384,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        3616,
+        4076,
         -256
       ],
       "notes": "After import, open this node and select 'SW-007 LLM Metadata' from the Workflow dropdown (canonical SW-007). The value is intentionally blank — n8n assigns the real workflow ID on your instance; it cannot be embedded in the exported JSON."
@@ -398,9 +394,7 @@
         "workflowId": {
           "__rl": true,
           "value": "A6qDuvioZHBm8yYX",
-          "mode": "list",
-          "cachedResultUrl": "/workflow/A6qDuvioZHBm8yYX",
-          "cachedResultName": "SW-008 LLM Knowledge v3.5.0 ACTIVE"
+          "mode": "id"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -419,7 +413,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        3840,
+        4300,
         -256
       ],
       "notes": "After import, open this node and select 'SW-008 LLM Knowledge' from the Workflow dropdown (canonical SW-008). The value is intentionally blank — n8n assigns the real workflow ID on your instance; it cannot be embedded in the exported JSON."
@@ -452,7 +446,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        4064,
+        4524,
         -256
       ]
     },
@@ -467,7 +461,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        4272,
+        4732,
         16
       ],
       "credentials": {
@@ -487,7 +481,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4272,
+        4732,
         -256
       ],
       "notes": "Pure: evidence (§32), citations R-06, validation R-05."
@@ -520,7 +514,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        4496,
+        4956,
         -256
       ]
     },
@@ -535,7 +529,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        4720,
+        5180,
         16
       ],
       "credentials": {
@@ -555,7 +549,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4720,
+        5180,
         -256
       ],
       "notes": "SW-012 §35 (pure)."
@@ -571,7 +565,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        4944,
+        5404,
         -256
       ],
       "credentials": {
@@ -587,9 +581,7 @@
         "workflowId": {
           "__rl": true,
           "value": "fTAVbMiy7ANsT0Yi",
-          "mode": "list",
-          "cachedResultUrl": "/workflow/fTAVbMiy7ANsT0Yi",
-          "cachedResultName": "SW-013 Embeddings"
+          "mode": "id"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -606,7 +598,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        5152,
+        5612,
         -256
       ],
       "notes": "After import, open this node and select 'SW-013 Embeddings' from the Workflow dropdown (canonical SW-013). The value is intentionally blank — n8n assigns the real workflow ID on your instance; it cannot be embedded in the exported JSON."
@@ -639,7 +631,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        5376,
+        5836,
         -256
       ]
     },
@@ -652,7 +644,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5600,
+        6060,
         16
       ],
       "notes": "R-09 guard."
@@ -662,9 +654,7 @@
         "workflowId": {
           "__rl": true,
           "value": "NKf9PFWmldWEJ2dz",
-          "mode": "list",
-          "cachedResultUrl": "/workflow/NKf9PFWmldWEJ2dz",
-          "cachedResultName": "SW-014 Repository Writer"
+          "mode": "id"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -681,7 +671,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        5600,
+        6060,
         -256
       ],
       "notes": "After import, open this node and select 'SW-014 Repository Writer' from the Workflow dropdown (canonical SW-014). The value is intentionally blank — n8n assigns the real workflow ID on your instance; it cannot be embedded in the exported JSON."
@@ -714,7 +704,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        5824,
+        6284,
         -256
       ]
     },
@@ -727,7 +717,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        6032,
+        6492,
         16
       ],
       "notes": "§154 Repository → Rollback."
@@ -743,7 +733,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        6032,
+        6492,
         -256
       ],
       "credentials": {
@@ -765,7 +755,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        6256,
+        6716,
         -256
       ],
       "credentials": {
@@ -804,7 +794,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        6480,
+        6940,
         -256
       ]
     },
@@ -817,7 +807,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        6704,
+        7164,
         -320
       ],
       "notes": "§216 summary."
@@ -831,24 +821,24 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        6704,
+        7164,
         16
       ],
       "notes": "Generic failure emitter."
     },
     {
       "parameters": {
-        "jsCode": "// Postgres nodes (SW-003 dup-check, SW-004 register) emit a fresh item without binary.\n// SW-005 OCR needs the file. Re-attach the ENTIRE binary object from Download File so all\n// metadata (filename, mimeType, filesystem-mode storage pointer, etc.) is preserved.\n// json passes through unchanged.\nreturn [{\n  json: $json,\n  binary: $('Download File').first().binary\n}];"
+        "jsCode": "// STORAGE BOUNDARY — the last node in WF-001 that touches the file itself.\n// The Postgres nodes above (SW-003 dup-check, SW-004 register) each emit a fresh item\n// without binary, and SW-029 must receive the bytes in order to upload them. Re-attach\n// the ENTIRE binary object from Download File so filename, mimeType and the\n// filesystem-mode storage pointer all survive.\n//\n// This is the ONLY binary attach left in WF-001. Nothing after SW-029 carries binary:\n// the original is in object storage from here on and is fetched by storageKey when it\n// is needed. json passes through unchanged.\nreturn [{\n  json: $json,\n  binary: $('Download File').first().binary\n}];"
       },
       "id": "ebcc37e2-2fbb-4888-bec9-c7028d0500b1",
-      "name": "Re-attach File Binary",
+      "name": "Attach Binary → SW-029 (storage boundary)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         2656,
         -400
       ],
-      "notes": "Binary re-attachment. Postgres nodes drop item.binary; this restores the FULL binary object from Download File (preserving filename, mimeType, storage pointer) so SW-005 OCR receives it. json unchanged. Placed on main wire SW-004 -> SW-005; checkpoint side-branch untouched."
+      "notes": "PR-4. The only binary attach left in WF-001, and the last node that touches the file. Feeds SW-029, which uploads the bytes; nothing downstream carries binary."
     },
     {
       "parameters": {
@@ -899,6 +889,42 @@
         -624
       ],
       "notes": "TERMINATING side-branch. Postgres nodes REPLACE the item and DROP binary (Guidelines §4), so the preflight must NOT sit in the main stream — Init reads the file bytes via getBinaryDataBuffer and would throw. Download File fans out to BOTH this branch and Init; Init gates on the result by node reference (§3.5.1, current-run read)."
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "chvkOtVrQfCwh6Mu",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "9c1e7b40-2a55-4c8e-9d31-77a0b2c40001",
+      "name": "SW-029 Persist Original",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2856,
+        -400
+      ],
+      "notes": "PR-4. Stores the original exactly once and writes the five storage columns. Pinned by ID (CANONICAL_BASELINE rule 4). waitForSubWorkflow:true so the storageKey is available before the tuple is built. Must be ACTIVE on the instance: n8n 2.29.9 refuses an executeWorkflow call to an inactive child."
+    },
+    {
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// PR-4 — the ingestion pipeline's storage boundary.\n// SW-029 has persisted the original exactly once. From here the item is the reference\n// tuple and NOTHING downstream carries the binary, so memory, execution-log size and\n// queue payloads stop scaling with document size.\nconst persisted = $json || {};\nconst head = $('Guard: documentId present').first().json;\n\n// SW-029 is called with waitForSubWorkflow:true, but a sub-workflow call that fails to\n// resolve emits the CALLER'S OWN input in place of the child's output. That input has a\n// documentId too, so the only reliable evidence the child actually ran is a storageKey.\nif (!persisted.storageKey) {\n  throw new Error('SW-029 returned no storageKey for documentId=' + (head.documentId || '(missing)') +\n    '. Either the sub-workflow call did not resolve, or the original was not persisted. ' +\n    'Refusing to continue: everything downstream fetches the original by storageKey, so ' +\n    'proceeding would OCR a document whose original is not stored.');\n}\nif (String(persisted.documentId) !== String(head.documentId)) {\n  throw new Error('SW-029 returned documentId=' + persisted.documentId +\n    ' but this execution is processing ' + head.documentId + '.');\n}\n\nreturn [{ json: {\n  // ---- the four-field reference tuple (Object Storage standard) ----\n  documentId:    persisted.documentId,\n  sha256:        persisted.sha256,\n  storageKey:    persisted.storageKey,\n  correlationId: head.correlationId,\n\n  // ---- carried because downstream nodes already read them by name ----\n  filename: head.filename,\n  source:   head.source,\n\n  // mimeType is the VALIDATED type of the STORED BYTES, not the Drive value.\n  // WF-001 downloads with googleFileConversion, so a Google-native document arrives as\n  // application/pdf while Drive still reports application/vnd.google-apps.*. SW-005's\n  // detectFormat() keys off this field: passing the Drive value makes it classify such a\n  // document as 'unknown' and drop native pagination. The original Drive value is kept\n  // for audit rather than discarded.\n  mimeType:      persisted.contentType,\n  driveMimeType: head.mimeType,\n\n  storageBucket: persisted.storageBucket,\n  byteSize:      persisted.byteSize\n} }];"
+      },
+      "id": "9c1e7b40-2a55-4c8e-9d31-77a0b2c40002",
+      "name": "Storage Tuple (post-persist)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3056,
+        -400
+      ],
+      "notes": "PR-4. Emits the reference tuple and drops the binary. Also promotes the byte-derived contentType to mimeType so SW-005 classifies the document by what was actually stored."
     }
   ],
   "pinData": {},
@@ -1268,22 +1294,11 @@
         ]
       ]
     },
-    "Re-attach File Binary": {
-      "main": [
-        [
-          {
-            "node": "SW-005 Azure OCR",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Guard: documentId present": {
       "main": [
         [
           {
-            "node": "Re-attach File Binary",
+            "node": "Attach Binary → SW-029 (storage boundary)",
             "type": "main",
             "index": 0
           },
@@ -1300,6 +1315,39 @@
         [
           {
             "node": "Assert: taxonomy OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Binary → SW-029 (storage boundary)": {
+      "main": [
+        [
+          {
+            "node": "SW-029 Persist Original",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SW-029 Persist Original": {
+      "main": [
+        [
+          {
+            "node": "Storage Tuple (post-persist)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Storage Tuple (post-persist)": {
+      "main": [
+        [
+          {
+            "node": "SW-005 Azure OCR",
             "type": "main",
             "index": 0
           }
