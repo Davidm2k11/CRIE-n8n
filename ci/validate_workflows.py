@@ -375,6 +375,62 @@ def validate(path):
                 )
             break
 
+    # ---- 9: a node that declares an authentication type must actually BIND a credential ----
+    # A node can declare `authentication: genericCredentialType` + `genericAuthType:
+    # httpHeaderAuth` and carry NO `credentials` object at all. Nothing in the JSON looks
+    # wrong, the file imports cleanly, and every static check here passes — but at runtime
+    # the node has no credential to send and the request fails (or, worse, goes out
+    # unauthenticated). Observed in the shipped set: SW-029's three Supabase Storage calls
+    # and SW-030's 'Mint Signed URL' all declared httpHeaderAuth with nothing bound, because
+    # the credential did not exist yet when they were authored. This is the credential-side
+    # twin of check 6: a reference that cannot resolve, invisible until it runs.
+    AUTH_DECL = {
+        # parameters.authentication -> the parameter naming the required credential key
+        "genericCredentialType": "genericAuthType",
+        "predefinedCredentialType": "nodeCredentialType",
+    }
+    for n in nodes:
+        params = n.get("parameters", {}) or {}
+        auth = params.get("authentication")
+        key_param = AUTH_DECL.get(auth)
+        if not key_param:
+            continue
+        needed = params.get(key_param)
+        if not needed:
+            findings.append(
+                f"CRED BINDING [{n['name']}] declares authentication '{auth}' but has no "
+                f"'{key_param}', so the required credential type is undetermined."
+            )
+            continue
+        bound = n.get("credentials") or {}
+        entry = bound.get(needed) or {}
+        if not entry.get("id"):
+            findings.append(
+                f"CRED BINDING [{n['name']}] declares authentication '{auth}' with "
+                f"{key_param}='{needed}', but binds NO credential of that type "
+                f"(credentials.{needed}.id is absent). The node imports cleanly and every "
+                f"other static check passes; it fails only when it runs. Bind the credential "
+                f"by ID."
+            )
+
+    # ---- 10: the workflow artifact must carry a top-level id ----
+    # `n8n import:workflow` is the only deployment path that is idempotent — it PRESERVES
+    # the id in the file and updates that workflow in place. An artifact with no id cannot
+    # use it at all: the import aborts with
+    #   SQLITE_CONSTRAINT: NOT NULL constraint failed: workflow_entity.id
+    # leaving UI import as the only route, and UI import MINTS A NEW ID every time. That is
+    # exactly how this instance accumulated 8 copies of WF-001 and 2 of SW-005, and how a
+    # mode:'list' binding comes to resolve against a stale copy (check 6).
+    # An id-less artifact is therefore undeployable by the supported path, not merely untidy.
+    wf_id = (wf.get("id") or "").strip() if isinstance(wf.get("id"), str) else wf.get("id")
+    if not wf_id:
+        findings.append(
+            "WF IDENTITY  workflow has no top-level 'id'. `n8n import:workflow` rejects it "
+            "(NOT NULL constraint on workflow_entity.id), so it can only be imported through "
+            "the UI, which mints a NEW id on every import and leaves a duplicate copy behind. "
+            "Record the id the artifact deploys as."
+        )
+
     # ---- 7: multi-parent nodes that read the whole input (WARNING, not an error) ----
     # A node with multiple incoming parents executes ONCE PER INCOMING BRANCH, so
     # $input.all() returns only the CURRENT branch's items. Code that reasons across

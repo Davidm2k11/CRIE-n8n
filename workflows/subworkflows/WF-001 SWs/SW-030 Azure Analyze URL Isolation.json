@@ -1,4 +1,5 @@
 {
+  "id": "w0JADswpeOxRtPEZ",
   "name": "SW-030 Azure Analyze (URL isolation)",
   "meta": {
     "crie": {
@@ -33,6 +34,7 @@
     {
       "id": "mint",
       "name": "Mint Signed URL",
+      "credentials": { "httpHeaderAuth": { "id": "qc5C9NOR2HwCTifh", "name": "Supabase Storage (service_role)" } },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [440, 300],
