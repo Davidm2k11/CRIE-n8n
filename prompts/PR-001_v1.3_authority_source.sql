@@ -22,9 +22,12 @@
 -- placeholder are UNCHANGED.
 --
 -- INTERPOLATION-SAFE BY CONSTRUCTION: the new body is derived from the stored
--- v1.2 row with replace(), so the chr()-built {{ocr}} placeholder is carried over
+-- v1.2 row with replace(), so the chr()-built ocr placeholder is carried over
 -- byte-for-byte and is never re-typed in this file. (§E of
--- docs/SRD_CHANGES_SINCE_SPEC.md: never send a literal {{ through n8n.)
+-- docs/SRD_CHANGES_SINCE_SPEC.md: never send a literal double-brace sequence
+-- through an n8n Postgres node — it is interpolated and destroyed. That rule
+-- applies to COMMENTS in this file too, which is why the placeholder is described
+-- here in words rather than written out.)
 --
 -- ADDITIVE: inserts v1.3 as a NEW ROW. v1.0–v1.2 remain for audit (baseline rule
 -- 3). SW-008's loader (ORDER BY version DESC LIMIT 1, version is TEXT) selects
@@ -47,16 +50,20 @@ SELECT
 
     -- user_prompt: v1.2 with the two edits described above.
     replace(
-      replace(
+      -- (1) reword the language exemption so it stops doubling as a definition.
+      -- regexp_replace, not replace(): the clause spans a line break, and matching
+      -- it literally makes the edit silently no-op on any whitespace or line-ending
+      -- difference between this file and the stored row. The VERIFY block below
+      -- asserts the old wording is actually gone — a literal match failed exactly
+      -- this way on the first attempt.
+      regexp_replace(
         (SELECT user_prompt FROM configuration.prompt_versions
           WHERE prompt_id = 'PR-001' AND version = '1.2'),
-
-        -- (1) reword the language exemption so it stops doubling as a definition
-        $OLD$- "authoritySource" is exempt: keep product names, standard names, and section
-  titles exactly as they appear in the source; do not translate them either way.$OLD$,
+        $OLD$- "authoritySource" is exempt:.*?either way\.$OLD$,
         $NEW$- "authoritySource" is NOT translated: it is one of the nine fixed English
   values listed under AUTHORITY SOURCE below, and is never rendered in another
-  language. It is a document-type label, not text copied from the document.$NEW$
+  language. It is a document-type label, not text copied from the document.$NEW$,
+        'sg'
       ),
 
       -- (2) insert the AUTHORITY SOURCE block immediately before CATEGORY
