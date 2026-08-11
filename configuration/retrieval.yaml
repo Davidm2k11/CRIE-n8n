@@ -20,7 +20,32 @@ schemaVersion: "1.1"
 
 # --- §305 Retrieval Configuration ------------------------------------------
 topK: 50                          # candidates retained after hybrid merge
-minimumSimilarity: 0.30           # cosine floor for semantic candidates (§459)
+# §459 cosine floor for semantic candidates. CALIBRATED against the real 962-unit
+# corpus and text-embedding-3-small; §305 makes this a configuration key precisely so
+# it can be set per deployment, and the authored 0.30 was never measured here.
+#
+# Why 0.30 was not functioning as a floor at all — measured similarity over the WHOLE
+# corpus, per probe requirement (median similarity is 0.21–0.28, i.e. the model's
+# background level on this corpus):
+#     units at >= 0.30 :  R1 349 | R2 224 | R3 412 | R4 169 | R5 6      (of 962)
+#     units at >= 0.45 :  R1 110 | R2  16 | R3 129 | R4   7 | R5 0
+# At 0.30 between 18% and 43% of the entire repository qualifies as "semantically
+# similar" to any requirement; topK truncation, not the floor, was doing the work.
+#
+# Why 0.45 specifically. It is taken from where LEGITIMATE EVIDENCE BEGINS, not from
+# where the negative control disappears:
+#     lowest genuinely relevant unit found : 0.4908  R2, "Visual Indicators are
+#                                            indicators set by the user in terms of
+#                                            colour and levels" (R2's own true
+#                                            evidence spans 0.4908–0.5098)
+#     highest negative-control unit        : 0.4194  R5, "Users can log in using the
+#                                            Windows method" (SAML/SSO has no corpus
+#                                            coverage at all; its whole neighbourhood
+#                                            is password-login material)
+# 0.45 sits near the middle of that 0.4194–0.4908 gap: +7.3% above the highest
+# irrelevant unit, -8.3% below the weakest genuine one. R1's relevant units start at
+# 0.5988 and R3's at 0.5988, so neither is touched.
+minimumSimilarity: 0.45
 metadataFiltering: true           # SW-017 executes before retrieval (§457)
 authorityWeight: 0.25             # authority contribution (mirrors §462 25%)
 rerankerEnabled: false            # R-12/§305 gate; requires crossEncoderModel
