@@ -1,0 +1,59 @@
+{
+  "id": "GmbtDbhHCYza5m1t",
+  "name": "SW-017 Metadata Filter",
+  "meta": {
+    "crie": {
+      "workflow_id": "SW-017",
+      "purpose": "Metadata filtering before retrieval (§257/§457).",
+      "contract": "context_package.contract.json (WF-002 output, §294/§76)"
+    }
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "when-called-by-wf-002",
+      "name": "When Called by WF-002",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "notes": "inputSource 'passthrough' (lowercase t) per the frozen SW I/O contract."
+    },
+    {
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "\n// ===== SW-017 Metadata Filter (§257/§457) =====\n// Runs BEFORE retrieval. Emits the filter set the retriever applies; it does not\n// itself query the repository.\nconst inp = $('When Called by WF-002').first().json;\nconst profile = inp.requirementProfile || {};\nconst cfg = inp.config || {};\nconst base = Object.assign({}, profile.filters || {});\n\nif (cfg.metadataFiltering === false) {\n  // §305 gate. Explicitly emit an EMPTY filter set and say so, rather than\n  // quietly passing the derived filters through.\n  return [{ json: Object.assign({}, inp, {\n    filters: {}, filtersApplied: false,\n    filterNote: 'metadataFiltering=false (§305): no metadata filter applied.' }) }];\n}\n\n// Only fields the repository can actually filter on are emitted. Inventing a filter\n// the schema cannot honour would silently narrow retrieval to nothing.\nconst filters = {};\nif (Array.isArray(profile.modules) && profile.modules.length) filters.modules = profile.modules;\nif (profile.product) filters.product = profile.product;\nif (Array.isArray(base.expandedTopics) && base.expandedTopics.length) filters.expandedTopics = base.expandedTopics;\nif (base.authority) filters.authority = base.authority;\nif (base.lifecycleState) filters.lifecycleState = base.lifecycleState;\n\nreturn [{ json: Object.assign({}, inp, { filters, filtersApplied: Object.keys(filters).length > 0 }) }];\n"
+      },
+      "id": "build-filters",
+      "name": "Build Filters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "When Called by WF-002": {
+      "main": [
+        [
+          {
+            "node": "Build Filters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveExecutionProgress": true
+  }
+}

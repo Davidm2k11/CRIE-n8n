@@ -15,53 +15,87 @@
       "name": "WF-002 Entry (requirement in)",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
-      "position": [0, 0]
+      "position": [
+        0,
+        0
+      ]
     },
     {
       "parameters": {
-        "workflowId": "SW-016",
-        "options": {}
+        "workflowId": {
+          "__rl": true,
+          "value": "5F56Lx5D1MkTKSfI",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
       },
       "id": "node-sw016",
-      "name": "SW-016 Requirement Analyzer (§256/§453-455)",
+      "name": "SW-031 Requirement Analyzer (§256/§453-455)",
       "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [220, 0],
-      "notes": "Normalization + metadata/synonym/acronym expansion; strategy selection (§456)."
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        0
+      ],
+      "notes": "Pinned by ID (CANONICAL_BASELINE rule 4). Must be ACTIVE on the instance: n8n 2.29.9 refuses executeWorkflow against an inactive child."
     },
     {
       "parameters": {
-        "workflowId": "SW-017",
-        "options": {}
+        "workflowId": {
+          "__rl": true,
+          "value": "GmbtDbhHCYza5m1t",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
       },
       "id": "node-sw017",
       "name": "SW-017 Metadata Filter (§257/§457)",
       "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [440, 0],
-      "notes": "Filters BEFORE retrieval; Certified-only by default."
+      "typeVersion": 1.2,
+      "position": [
+        440,
+        0
+      ],
+      "notes": "Pinned by ID (CANONICAL_BASELINE rule 4). Must be ACTIVE on the instance: n8n 2.29.9 refuses executeWorkflow against an inactive child."
     },
     {
       "parameters": {
-        "workflowId": "SW-018",
-        "options": {}
+        "workflowId": {
+          "__rl": true,
+          "value": "r6vdWLqQnngLzrXt",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
       },
       "id": "node-sw018",
       "name": "SW-018 Hybrid Retriever (§258/§458-460)",
       "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [660, 0],
-      "notes": "Keyword + Semantic + Candidate Merge. §471 empty-retrieval ladder handled here."
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ],
+      "notes": "Pinned by ID (CANONICAL_BASELINE rule 4). Must be ACTIVE on the instance: n8n 2.29.9 refuses executeWorkflow against an inactive child."
     },
     {
       "parameters": {
-        "functionCode": "// Authority Ranking (§464/§439/R-16) + composite ranking (§462) + dedup (§466).\n// Delegates to src/retrieval rank stages via the CRIE runtime.\nreturn items;"
+        "jsChildProcess": false,
+        "jsCode": "// =============================================================================\n// WF-002 Enterprise Retrieval — shared pure logic.\n//\n// Faithful JS port of the canonical Python reference in\n// crie-canonical-v1.0.2/workflows/shared/retrieval_*.py. Formulas, weights and\n// thresholds are NOT re-derived here: they come from configuration/retrieval.yaml\n// (R-08) and the spec sections cited per function. Nothing in this file performs\n// I/O, so every part is unit-testable outside n8n.\n// =============================================================================\n\n// --- §305 canonical defaults, used ONLY when the runtime cache has no row -----\n// These are transcribed from configuration/retrieval.yaml, which is the authored\n// source of truth. They are not an alternative configuration: when they are used\n// the caller records configSource='canonical-default' so the substitution is\n// visible in telemetry rather than silent.\nconst CANONICAL_RETRIEVAL_CONFIG = {\n  topK: 50,\n  minimumSimilarity: 0.30,\n  metadataFiltering: true,\n  authorityWeight: 0.25,\n  rerankerEnabled: false,\n  crossEncoderModel: '',\n  maximumContextTokens: 8000,\n  defaultStrategy: 'Hybrid',\n  distanceMetric: 'Cosine',\n  embeddingDimension: 1536,\n  keyword: { fullTextSearch: true, trigramSearch: true, ranking: 'BM25' },\n  compositeWeights: {\n    semanticSimilarity: 0.35, authority: 0.25, keywordScore: 0.20,\n    metadataMatch: 0.10, documentFreshness: 0.10,\n  },\n  freshnessEnabled: true,\n  freshnessHalfLifeDays: 365,\n  expansion: { metadataExpansion: true, synonymExpansion: true, acronymNormalization: true },\n  deduplication: { semanticSimilarityThreshold: 0.95 },\n  emptyRetrieval: { maxRetries: 3, ladder: ['retry', 'relaxMetadataFilters', 'expandSynonyms'], onExhaustion: 'InsufficientEvidence' },\n  contextQuality: {\n    weights: {\n      coverage: 0.30, authority: 0.20, citationCompleteness: 0.20,\n      knowledgeDiversity: 0.15, conflictPenalty: 0.10, freshness: 0.05,\n    },\n  },\n};\n\nconst STOPWORDS = new Set(['the','a','an','and','or','of','to','for','in','on','with',\n  'is','are','be','must','shall','should','that','this','it','as','by','at','from','will']);\nconst WORD_RE = /[a-z0-9][a-z0-9-]*/g;\nconst PUNCT_RE = /[^\\w\\s-]/g;\nconst ACRONYM_RE = /\\b[A-Z][A-Z0-9]{1,}\\b/g;\nconst ENTITY_RE = /\\b[A-Z][a-zA-Z]+(?:\\s+[A-Z][a-zA-Z]+)*\\b/g;\n\n// --- §453 language detection -------------------------------------------------\n// Arabic block U+0600..U+06FF. The pipeline is bilingual: PR-001 v1.2 keeps each\n// knowledge unit in its source language, so a requirement may legitimately be\n// Arabic and must not be forced to English.\nfunction detectLanguage(text) {\n  return /[؀-ۿ]/.test(String(text || '')) ? 'ar' : 'en';\n}\n\nfunction detectIntent(raw) {\n  const low = String(raw || '').toLowerCase();\n  if (['support', 'compliant', 'does it', 'can it'].some(k => low.includes(k))) return 'compliance_check';\n  if (['how', 'configure', 'setup', 'steps'].some(k => low.includes(k))) return 'how_to';\n  return null;\n}\n\n// --- SW-031 (canonically SW-016) Requirement Analyzer, §256/§453-455 ---------\nfunction analyzeRequirement(rawRequirement, cfg, dictionaries, metadataHints) {\n  const raw = String(rawRequirement || '');\n  const hints = metadataHints || {};\n  const language = detectLanguage(raw);\n  const intent = detectIntent(raw);\n\n  // Raw-case extraction BEFORE lowercasing, so entities/acronyms survive.\n  const rawAcronyms = raw.match(ACRONYM_RE) || [];\n  const entities = [...new Set(raw.match(ENTITY_RE) || [])].sort();\n\n  // §453 normalise: lowercase -> strip punctuation -> tokenise -> drop stopwords\n  const depunct = raw.toLowerCase().replace(PUNCT_RE, ' ');\n  const tokens = (depunct.match(WORD_RE) || []).filter(t => !STOPWORDS.has(t));\n\n  const expanded = [];\n  const exp = cfg.expansion || {};\n\n  // §453 acronym normalisation\n  if (exp.acronymNormalization !== false) {\n    for (const ac of rawAcronyms) {\n      for (const e of (dictionaries.acronyms[ac] || [])) {\n        for (const w of (String(e).toLowerCase().match(WORD_RE) || [])) {\n          if (!STOPWORDS.has(w)) expanded.push(w);\n        }\n      }\n    }\n  }\n  // §455 synonym expansion\n  if (exp.synonymExpansion !== false) {\n    for (const t of tokens.slice()) {\n      for (const syn of (dictionaries.synonyms[t] || [])) {\n        for (const w of (String(syn).toLowerCase().match(WORD_RE) || [])) {\n          if (!STOPWORDS.has(w)) expanded.push(w);\n        }\n      }\n    }\n  }\n\n  // §454 metadata expansion -> derived filters\n  const filters = Object.assign({}, hints);\n  if (exp.metadataExpansion !== false) {\n    const derived = [];\n    for (const t of tokens.concat(entities.map(e => e.toLowerCase()))) {\n      for (const d of (dictionaries.metadata[t] || [])) derived.push(d);\n    }\n    if (derived.length && filters.expandedTopics === undefined) {\n      filters.expandedTopics = [...new Set(derived)].sort();\n    }\n  }\n\n  const keywords = [...new Set(tokens.concat(expanded))];\n  const modules = Array.isArray(hints.modules) ? hints.modules : [];\n\n  return {\n    normalizedQuery: tokens.join(' '),\n    keywords,\n    entities,\n    modules,\n    product: hints.product !== undefined ? hints.product : null,\n    intent,\n    language,\n    filters,\n    expandedTerms: [...new Set(expanded)],\n  };\n}\n\n// --- §456 strategy selection -------------------------------------------------\nfunction selectStrategy(profile, cfg) {\n  const def = cfg.defaultStrategy || 'Hybrid';\n  // A requirement with no usable tokens cannot drive semantic or keyword search;\n  // metadata is all that remains. Explicit rather than silently returning nothing.\n  if (!profile.keywords.length && !profile.normalizedQuery) return 'MetadataOnly';\n  return def;\n}\n\n// --- §460/§461 candidate merge ----------------------------------------------\n// Scores stay INDEPENDENT (§461): merging takes the max of each dimension rather\n// than summing, so a candidate found by both routes is not double-counted.\nfunction mergeCandidates(keywordHits, semanticHits) {\n  const merged = new Map();\n  for (const c of keywordHits.concat(semanticHits)) {\n    const k = c.evidenceId;\n    const cur = merged.get(k);\n    if (!cur) { merged.set(k, Object.assign({}, c)); continue; }\n    cur.keywordScore = Math.max(cur.keywordScore || 0, c.keywordScore || 0);\n    cur.semanticScore = Math.max(cur.semanticScore || 0, c.semanticScore || 0);\n    cur.metadataScore = Math.max(cur.metadataScore || 0, c.metadataScore || 0);\n  }\n  return [...merged.values()];\n}\n\n// --- §439/§464 authority + §463 freshness -----------------------------------\nfunction applyAuthorityAndFreshness(candidates, cfg, authoritySources, nowMs) {\n  const vals = Object.values(authoritySources || {});\n  const maxAuth = vals.length ? Math.max(...vals) : 0;\n  const denom = maxAuth || 1;\n  const hl = Math.max(Number(cfg.freshnessHalfLifeDays) || 365, 1);\n  const now = nowMs === undefined ? Date.now() : nowMs;\n  for (const c of candidates) {\n    c.authorityScore = (authoritySources[c.sourceType] || 0) / denom;\n    if (cfg.freshnessEnabled !== false) {\n      const t = Date.parse(c.updatedAt);\n      const ageDays = Number.isFinite(t) ? Math.max((now - t) / 86400000, 0) : 0;\n      c.freshnessScore = Math.pow(0.5, ageDays / hl);   // exponential decay\n    } else {\n      c.freshnessScore = 0;\n    }\n  }\n}\n\n// --- §462 composite ranking --------------------------------------------------\nfunction compositeRank(candidates, cfg) {\n  const w = cfg.compositeWeights;\n  const sum = Object.values(w).reduce((a, b) => a + b, 0);\n  // §462: weights SHALL be configurable, and are validated to sum to 1.00.\n  if (Math.abs(sum - 1) > 1e-6) {\n    throw new Error('WF-002 §462: compositeWeights must sum to 1.00, got ' + sum.toFixed(4) +\n      '. Refusing to rank with an invalid weighting.');\n  }\n  for (const c of candidates) {\n    c.compositeScore =\n      w.semanticSimilarity * (c.semanticScore || 0) +\n      w.authority * (c.authorityScore || 0) +\n      w.keywordScore * (c.keywordScore || 0) +\n      w.metadataMatch * (c.metadataScore || 0) +\n      w.documentFreshness * (c.freshnessScore || 0);\n  }\n}\n\n// --- §466 duplicate detection ------------------------------------------------\nfunction deduplicate(candidates) {\n  const ranked = candidates.slice().sort((a, b) => b.compositeScore - a.compositeScore);\n  const kept = [], seenKu = new Set(), seenEv = new Set(), seenCite = new Set(), seenText = new Set();\n  for (const c of ranked) {\n    const norm = String(c.text || '').toLowerCase().split(/\\s+/).join(' ');\n    if (seenEv.has(c.evidenceId)) continue;\n    if (c.knowledgeUnitId && seenKu.has(c.knowledgeUnitId)) continue;\n    if (c.citationId && seenCite.has(c.citationId)) continue;\n    if (norm && seenText.has(norm)) continue;\n    seenEv.add(c.evidenceId);\n    if (c.knowledgeUnitId) seenKu.add(c.knowledgeUnitId);\n    if (c.citationId) seenCite.add(c.citationId);\n    if (norm) seenText.add(norm);\n    kept.push(c);\n  }\n  return kept;\n}\n\n// --- SW-020 §467 conflict detection -----------------------------------------\n// Conflicts SHALL be preserved, never hidden. Resolution is the Reasoning\n// Engine's job, so every conflict carries resolution:'deferToReasoning'.\nfunction detectConflicts(candidates) {\n  const byClaim = new Map();\n  for (const c of candidates) {\n    if (c.claimKey && c.claimPolarity) {\n      if (!byClaim.has(c.claimKey)) byClaim.set(c.claimKey, []);\n      byClaim.get(c.claimKey).push(c);\n    }\n  }\n  const conflicts = [];\n  for (const [claimKey, group] of byClaim) {\n    const polarities = new Set(group.map(c => c.claimPolarity));\n    if (polarities.has(1) && polarities.has(-1)) {\n      const pick = p => group.filter(c => c.claimPolarity === p).map(c => ({\n        evidenceId: c.evidenceId, knowledgeUnitId: c.knowledgeUnitId, authorityScore: c.authorityScore,\n      }));\n      conflicts.push({ claimKey, supporting: pick(1), contradicting: pick(-1), resolution: 'deferToReasoning' });\n    }\n  }\n  return conflicts;\n}\n\n// --- §468 deterministic compression -----------------------------------------\n// NEVER AI-summarise: compression only removes duplicates and repeated citations.\nfunction estimateTokens(text) { return Math.max(1, Math.floor((String(text || '').length + 3) / 4)); }\n\nfunction compress(candidates) {\n  const seenText = new Set(), seenCite = new Set(), out = [];\n  for (const c0 of candidates) {\n    const c = Object.assign({}, c0);\n    const norm = String(c.text || '').toLowerCase().split(/\\s+/).join(' ');\n    if (seenText.has(norm)) continue;\n    if (c.citationId && seenCite.has(c.citationId)) c.citationId = null;\n    seenText.add(norm);\n    if (c.citationId) seenCite.add(c.citationId);\n    c.tokenEstimate = estimateTokens(c.text);\n    out.push(c);\n  }\n  return out;\n}\n\n// --- §469 token budget: lowest-ranked removed first --------------------------\nfunction rankOrder(candidates) {\n  return candidates.slice().sort((a, b) =>\n    ((b.rerankScore != null ? b.rerankScore : b.compositeScore) -\n     (a.rerankScore != null ? a.rerankScore : a.compositeScore)));\n}\n\nfunction enforceTokenBudget(candidates, cfg) {\n  const ordered = rankOrder(candidates);\n  const kept = []; let total = 0;\n  for (const c of ordered) {\n    const t = c.tokenEstimate || estimateTokens(c.text);\n    if (total + t > cfg.maximumContextTokens) continue;\n    kept.push(c); total += t;\n  }\n  return { kept, tokenCount: total };\n}\n\n// --- §470 context quality score ---------------------------------------------\nfunction qualityScore(candidates, conflicts, cfg) {\n  if (!candidates.length) return 0;\n  const w = cfg.contextQuality.weights;\n  const n = candidates.length;\n  const coverage = Math.min(n / Math.max(cfg.topK, 1), 1);\n  const authority = candidates.reduce((a, c) => a + (c.authorityScore || 0), 0) / n;\n  const citationCompleteness = candidates.filter(c => c.citationId).length / n;\n  const diversity = new Set(candidates.map(c => c.knowledgeUnitId)).size / n;\n  const freshness = candidates.reduce((a, c) => a + (c.freshnessScore || 0), 0) / n;\n  const conflictPenalty = 1 / (1 + conflicts.length);\n  const score = w.coverage * coverage + w.authority * authority +\n    w.citationCompleteness * citationCompleteness + w.knowledgeDiversity * diversity +\n    w.conflictPenalty * conflictPenalty + w.freshness * freshness;\n  return Math.round(Math.min(Math.max(score, 0), 1) * 10000) / 10000;\n}\n\n// ===== WF-002 Authority + Composite Rank + Dedup (§462/§464/§466) =====\nconst inp = $json;\nconst cfg = inp.config;\nconst cands = inp.candidates || [];\n\nconst authRows = $('Load Authority Sources').all().map(i => i.json);\nconst authority = {};\nfor (const r of authRows) if (r && r.source) authority[r.source] = Number(r.score) || 0;\n\napplyAuthorityAndFreshness(cands, cfg, authority, Date.now());\ncompositeRank(cands, cfg);\nconst before = cands.length;\nconst deduped = deduplicate(cands);\n\nreturn [{ json: Object.assign({}, inp, {\n  candidates: deduped,\n  authoritySourceCount: Object.keys(authority).length,\n  afterDedup: deduped.length,\n  retrievalStats: Object.assign({}, inp.retrievalStats || {}, { candidateCount: before }),\n}) }];\n"
       },
       "id": "node-rank",
       "name": "Authority + Composite Rank + Dedup (§462/§464/§466)",
-      "type": "n8n-nodes-base.function",
-      "typeVersion": 1,
-      "position": [880, 0]
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
     },
     {
       "parameters": {
@@ -78,88 +112,263 @@
       "name": "Rerank Gate (rerankerEnabled — R-12/§305)",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
-      "position": [1100, 0]
+      "position": [
+        1100,
+        0
+      ]
     },
     {
       "parameters": {
-        "workflowId": "SW-019",
-        "options": {}
+        "workflowId": {
+          "__rl": true,
+          "value": "cG27mwjc4MjSHnto",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
       },
       "id": "node-sw019",
       "name": "SW-019 Cross-Encoder Reranker (§259/§465)",
       "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [1320, -120],
-      "notes": "GATED. Requires crossEncoderModel. SHALL NOT retrieve new info (§465)."
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        -120
+      ],
+      "notes": "Pinned by ID (CANONICAL_BASELINE rule 4). Must be ACTIVE on the instance: n8n 2.29.9 refuses executeWorkflow against an inactive child."
     },
     {
       "parameters": {
-        "workflowId": "SW-020",
-        "options": {}
+        "workflowId": {
+          "__rl": true,
+          "value": "5pHNV53IhJcqk7aO",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
       },
       "id": "node-sw020",
       "name": "SW-020 Conflict Detector (§260/§467)",
       "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [1540, 0],
-      "notes": "Conflicts preserved, never hidden. Resolution deferred to WF-003."
+      "typeVersion": 1.2,
+      "position": [
+        1540,
+        0
+      ],
+      "notes": "Pinned by ID (CANONICAL_BASELINE rule 4). Must be ACTIVE on the instance: n8n 2.29.9 refuses executeWorkflow against an inactive child."
     },
     {
       "parameters": {
-        "workflowId": "SW-021",
-        "options": {}
+        "workflowId": {
+          "__rl": true,
+          "value": "Anxh0DkogNLVs0os",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
       },
       "id": "node-sw021",
       "name": "SW-021 Context Builder (§261/§468-470)",
       "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1,
-      "position": [1760, 0],
-      "notes": "Compression (deterministic, no AI summarize) + token budget + quality score."
+      "typeVersion": 1.2,
+      "position": [
+        1760,
+        0
+      ],
+      "notes": "Pinned by ID (CANONICAL_BASELINE rule 4). Must be ACTIVE on the instance: n8n 2.29.9 refuses executeWorkflow against an inactive child."
     },
     {
       "parameters": {
-        "functionCode": "// §74 Context Validation: fail-fast on invalid Context Package (§298).\n// Rejects downstream call if invalid; on empty retrieval emits insufficientEvidence (§471).\nreturn items;"
+        "jsChildProcess": false,
+        "jsCode": "\n// ===== WF-002 Context Validation (§74) + Emit Package (§294) =====\n// Validates against context_package.contract.json BEFORE the package leaves WF-002.\n// A malformed package must fail here, not inside WF-003.\nconst pkg = $json;\nconst REQUIRED = ['schemaVersion','contextId','requirement','requirementProfile','knowledgeUnits',\n  'evidence','citations','conflicts','confidence','statistics','createdAt'];\nconst missing = REQUIRED.filter(k => pkg[k] === undefined || pkg[k] === null);\nif (missing.length) {\n  throw new Error('WF-002 §74: Context Package is missing required field(s): ' + missing.join(', '));\n}\nif (pkg.schemaVersion !== '1.1') throw new Error('WF-002 §296: schemaVersion must be \"1.1\".');\nfor (const k of ['knowledgeUnits','evidence','citations','conflicts']) {\n  if (!Array.isArray(pkg[k])) throw new Error('WF-002 §74: ' + k + ' must be an array.');\n}\nif (typeof pkg.confidence !== 'number' || pkg.confidence < 0 || pkg.confidence > 1) {\n  throw new Error('WF-002 §470: confidence must be a number in 0..1, got ' + pkg.confidence);\n}\nconst S = pkg.statistics || {};\nfor (const k of ['strategy','candidateCount','afterDedup','reranked','conflictCount','tokenCount','qualityScore','stageTimingsMs']) {\n  if (S[k] === undefined) throw new Error('WF-002 §294: statistics.' + k + ' is required.');\n}\n// WF-002 is retrieval only. A compliance decision appearing here would mean WF-003\n// logic had leaked into the retrieval layer.\nconst FORBIDDEN = ['decision','complianceLevel','response','reviewStatus','reviewRequired','summary','explanation'];\nconst leaked = FORBIDDEN.filter(k => Object.prototype.hasOwnProperty.call(pkg, k));\nif (leaked.length) {\n  throw new Error('WF-002 contract violation: reasoning field(s) ' + leaked.join(', ') +\n    ' present. WF-002 emits retrieval context only; compliance decisions belong to WF-003.');\n}\nreturn [{ json: pkg }];\n"
       },
       "id": "node-validate",
       "name": "Context Validation (§74) + Emit Package (§294)",
-      "type": "n8n-nodes-base.function",
-      "typeVersion": 1,
-      "position": [1980, 0]
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT source, score FROM configuration.authority_sources ORDER BY score DESC;",
+        "options": {}
+      },
+      "id": "load-authority-sources",
+      "name": "Load Authority Sources",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        200,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "36wScZRTy6L3yvWQ",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "§439/R-16 nine-source authority model. Read once per execution; the ranking node reads it by node reference."
+    },
+    {
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// Postgres replaces the item, so the authority rows would otherwise become the\n// payload and the requirement would be lost. Restore the entry payload by node\n// reference; the authority rows stay reachable as $('Load Authority Sources').\n//\n// Load Authority Sources is deliberately UPSTREAM rather than a parallel sibling.\n// As a sibling its execution order depends on canvas position, and the ranking node\n// would read it before it had run -- the same failure the validator flags and the\n// same one that broke the PR-4 recovery harness.\nreturn [{ json: $('WF-002 Entry (requirement in)').first().json }];"
+      },
+      "id": "wf002-restore-requirement",
+      "name": "Restore Requirement",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        260
+      ],
+      "notes": "Re-establishes the entry payload after the authority lookup."
     }
   ],
   "connections": {
     "WF-002 Entry (requirement in)": {
-      "main": [[{ "node": "SW-016 Requirement Analyzer (§256/§453-455)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Load Authority Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "SW-016 Requirement Analyzer (§256/§453-455)": {
-      "main": [[{ "node": "SW-017 Metadata Filter (§257/§457)", "type": "main", "index": 0 }]]
+    "SW-031 Requirement Analyzer (§256/§453-455)": {
+      "main": [
+        [
+          {
+            "node": "SW-017 Metadata Filter (§257/§457)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "SW-017 Metadata Filter (§257/§457)": {
-      "main": [[{ "node": "SW-018 Hybrid Retriever (§258/§458-460)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "SW-018 Hybrid Retriever (§258/§458-460)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "SW-018 Hybrid Retriever (§258/§458-460)": {
-      "main": [[{ "node": "Authority + Composite Rank + Dedup (§462/§464/§466)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Authority + Composite Rank + Dedup (§462/§464/§466)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Authority + Composite Rank + Dedup (§462/§464/§466)": {
-      "main": [[{ "node": "Rerank Gate (rerankerEnabled — R-12/§305)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Rerank Gate (rerankerEnabled — R-12/§305)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Rerank Gate (rerankerEnabled — R-12/§305)": {
       "main": [
-        [{ "node": "SW-019 Cross-Encoder Reranker (§259/§465)", "type": "main", "index": 0 }],
-        [{ "node": "SW-020 Conflict Detector (§260/§467)", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "SW-019 Cross-Encoder Reranker (§259/§465)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SW-020 Conflict Detector (§260/§467)",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "SW-019 Cross-Encoder Reranker (§259/§465)": {
-      "main": [[{ "node": "SW-020 Conflict Detector (§260/§467)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "SW-020 Conflict Detector (§260/§467)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "SW-020 Conflict Detector (§260/§467)": {
-      "main": [[{ "node": "SW-021 Context Builder (§261/§468-470)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "SW-021 Context Builder (§261/§468-470)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "SW-021 Context Builder (§261/§468-470)": {
-      "main": [[{ "node": "Context Validation (§74) + Emit Package (§294)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Context Validation (§74) + Emit Package (§294)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Authority Sources": {
+      "main": [
+        [
+          {
+            "node": "Restore Requirement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Requirement": {
+      "main": [
+        [
+          {
+            "node": "SW-031 Requirement Analyzer (§256/§453-455)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "settings": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveExecutionProgress": true
+  },
   "active": false,
-  "version": 1
+  "version": 1,
+  "id": "WF002RETRIEVAL01"
 }
