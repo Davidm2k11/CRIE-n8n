@@ -36,11 +36,26 @@ const SRC = node.parameters.jsCode;
 const SETTINGS = { tokensPerUnit: 55, tpmBudget: 30000, maxPacingMs: 55000,
                    maxBatches: 200, maxSplitDepth: 4 };
 
+/** The lean ocr plan() emits for the loop item: paragraphs only, no raw/content/tables. */
+const LEAN_OCR = {
+  provider: 'azure', model: 'prebuilt-layout', sourceFormat: 'pdf',
+  pagination: { pages: 2 }, readingOrderPresent: true,
+  paragraphs: [{ index: 0, text: 'p0' }, { index: 1, text: 'p1' }],
+  pages: [], stats: { paragraphs: 2 },
+  rawOmitted: { reason: 'dropped at the SW-008 boundary to bound loop memory' },
+};
+
 /** Run the real collect() with n8n's bindings stubbed. */
 function runCollect({ bx, batchMarker, response, settings = SETTINGS, quiet = true }) {
   const nodes = {
     'build-request() — Render Batch': { _bx: bx, _batchMarker: batchMarker },
-    'When Executed by WF-001': { documentId: 'DOC-TEST', correlationId: 'CID-TEST' },
+    // The trigger payload carries the FULL ocr (raw = Azure geometry). collect() must NOT
+    // re-attach it to the loop item — that defeated plan()'s lean-ocr optimisation and grew
+    // the Task Runner heap ~49.5 MB/batch until it OOMed. See LEAN OCR assertions below.
+    'When Executed by WF-001': { documentId: 'DOC-TEST', correlationId: 'CID-TEST',
+                                 ocr: { paragraphs: [{ index: 0, text: 'p0' }],
+                                        raw: { analyzeResult: 'FAT — must never ride the loop' } } },
+    'plan() — Batch Plan': { ocr: LEAN_OCR },
     'Load PR-001 + LLM Settings': { settings },
   };
   const $ = (name) => {
@@ -235,6 +250,38 @@ console.log('\n7. Batches that already succeeded are neither lost nor re-sent');
   check('all 30 paragraphs represented exactly once',
         covered.length === 30 && new Set(covered).size === 30,
         'covered=' + covered.length);
+}
+
+// ------------------------------------------- 8: the loop item stays LEAN (memory regression)
+// collect() rebuilds the loop item from the TRIGGER payload, which carries the full ocr
+// (raw = ~11.4 MB of Azure geometry). Re-attaching it defeated plan()'s lean-ocr optimisation
+// and grew the Task Runner heap ~49.5 MB/batch until it OOMed at ~batch 34 of 73. Every
+// return path must carry plan()'s LEAN ocr instead. Guards the fix on all three paths.
+console.log('\n8. Every collect() return path carries the LEAN ocr, never the fat trigger ocr');
+{
+  const st = mkState([mkBatch(1, 0, 1), mkBatch(2, 2, 3)]);
+  const leanCheck = (label, item) => {
+    check(label + ': ocr present', !!item.ocr);
+    check(label + ': ocr.paragraphs available (build-request() rehydrates from it)',
+          Array.isArray(item.ocr && item.ocr.paragraphs) && item.ocr.paragraphs.length === 2,
+          JSON.stringify(item.ocr && item.ocr.paragraphs));
+    check(label + ': ocr.raw ABSENT', !(item.ocr && 'raw' in item.ocr));
+    check(label + ': it is plan()’s lean object (rawOmitted marker)',
+          !!(item.ocr && item.ocr.rawOmitted));
+    check(label + ': trigger passthrough intact', item.documentId === 'DOC-TEST');
+  };
+
+  leanCheck('normal advance',
+    runCollect({ bx: st, batchMarker: 1, response: ok([0, 1]) })[0].json);
+  leanCheck('adaptive split',
+    runCollect({ bx: st, batchMarker: 1, response: truncated(16384) })[0].json);
+  leanCheck('429 retry',
+    runCollect({ bx: st, batchMarker: 1, response: { statusCode: 429, body: {} } })[0].json);
+
+  // The fat ocr must still be reachable for merge(), which spreads the trigger by reference.
+  const out = runCollect({ bx: st, batchMarker: 1, response: ok([0, 1]) })[0].json;
+  check('merge() can still emit the FULL ocr (its rawOmitted guard would fire on the lean one)',
+        !!out.ocr.rawOmitted);
 }
 
 console.log('\n' + '='.repeat(74));
