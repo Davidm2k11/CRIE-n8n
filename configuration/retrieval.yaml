@@ -35,10 +35,48 @@ distanceMetric: "Cosine"          # Cosine|InnerProduct|L2
 embeddingDimension: 1536          # R-09 v1 lock-in; informational, enforced by SW-013
 
 # --- §458 Keyword Retrieval -------------------------------------------------
+# trigramSearch is FALSE, and that is a behaviour change, not a typo. pg_trgm
+# similarity() scores the WHOLE knowledge unit against the WHOLE query, so it is
+# length-biased: on the real 962-unit corpus a 0.1 floor returned 501/95/338/43
+# units for the four English probe requirements, including the negative control.
+# It was the de-facto keyword arm only because plainto_tsquery ANDs every term and
+# therefore matched nothing. Keyword retrieval is now FTS with OR semantics gated
+# by term coverage (see minimumTermCoverage); re-enabling a trigram arm needs a
+# length-independent formulation (word/lexeme similarity), not this one.
+#
+# ranking: "BM25" is the authored §458 value and is left unchanged. Stock
+# PostgreSQL has no BM25 implementation, so the ranking actually applied is
+# ts_rank_cd (cover density, normalisation flag 32 -> rank/(rank+1)). Pre-existing
+# gap, recorded rather than silently redefined.
 keyword:
   fullTextSearch: true            # PostgreSQL FTS
-  trigramSearch: true             # pg_trgm
+  trigramSearch: false            # pg_trgm — see note above
   ranking: "BM25"                 # configuration-controlled
+  textSearchConfig: "english"     # text-search configuration for FTS lexemes.
+                                  # Non-Latin requirements never reach this arm:
+                                  # they carry no ASCII tokens, so §456 selects
+                                  # SemanticOnly (multilingual embedding).
+  # --- the two gate values, both measured against the real 962-unit corpus -----
+  # keywordScore is IDF-weighted coverage: the share of the requirement's TOTAL
+  # term information content a unit accounts for. Query terms absent from the
+  # corpus stay in the denominator deliberately — their absence is the evidence
+  # that the corpus does not cover the requirement.
+  #
+  # minimumMatchedTerms is the load-bearing rule. Measured candidate counts for
+  # units matching >= 2 distinct query lexemes:
+  #     R1 custom fields 373 | R2 thresholds 31 | R3 approval 169 | R5 SAML/SSO 0
+  # The negative control is rejected STRUCTURALLY — no unit in the corpus
+  # co-mentions two of {saml, federated, identity, single, sign, support, via,
+  # system} — not by a tuned number. Capped at the query's own lexeme count so a
+  # single-term requirement is still retrievable.
+  #
+  # minimumWeightedCoverage therefore only trims the tail. It sits below R2's
+  # genuine evidence ("threshold for 'less than worst' / 'requires attention' /
+  # 'exceeds target'", weighted coverage 0.1275) with margin, so raising it above
+  # ~0.125 would silently discard that requirement's best material. Measured
+  # kept-counts at 0.10: R1 270, R2 19, R3 169, R5 0 (topK then caps at 50).
+  minimumMatchedTerms: 2
+  minimumWeightedCoverage: 0.10
 
 # --- §462 Composite Ranking Formula (weights SHALL be configurable) ---------
 # NOTE: weights are validated to sum to 1.00 by SW-018/context builder.
