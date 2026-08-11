@@ -79,6 +79,57 @@ input instead of the child's output (manifesting as a false HUMAN_REVIEW).
   picker resolves exactly one record per name.
 - Step-by-step in [`WORKFLOW_INVENTORY.md`](WORKFLOW_INVENTORY.md).
 
+### Sub-workflows must be ACTIVE to be callable
+
+On n8n 2.29.9 an `executeWorkflow` call against an **inactive** child fails outright:
+
+```
+Workflow is not active and cannot be executed.
+```
+
+Verified A/B with an isolated probe pair (same parent, same child, nothing else changed):
+inactive → the above error; `n8n update:workflow --id=<id> --active=true` → succeeds.
+Every CRIE sub-workflow was inactive on the live instance, which alone would have stopped
+WF-001 end to end. Activation is therefore part of **deployment**, not an optional step,
+and it applies to SW-005/007/008/013/014/029/030.
+
+### Deploy by ID, never through the UI
+
+`n8n import:workflow --input=<file>` **preserves the `id` in the file** and updates that
+row in place, so redeploying is idempotent. An artifact with no `id` is rejected outright
+(`SQLITE_CONSTRAINT: NOT NULL constraint failed: workflow_entity.id`), leaving UI import
+as the only route — and UI import **mints a new id every time**. That is how the instance
+accumulated 8 copies of WF-001. CI guards both conditions.
+
+## Sub-workflow execution records under `saveDataSuccessExecution: none`
+
+**Correction to the PR-3 commit message.** It claimed "zero execution records created
+for the child". That is **not accurate** and should not be relied on. What is true — and
+what the security requirement actually needs — is narrower:
+
+> No signed URL and no node run-data are ever persisted. An execution **record** for the
+> child may exist, transiently.
+
+Measured on n8n 2.29.9 with an isolated twin pair (no Azure, no CRIE dependencies):
+
+- n8n creates the child's `execution_entity` row when the sub-workflow starts.
+- With `saveDataSuccessExecution: none` the run is **discarded rather than finalized**:
+  `deletedAt` is stamped immediately (a soft delete) and `status` is therefore left at
+  its last value — **`running`** — with `finished = 0` and `stoppedAt = NULL`.
+- The row survives an n8n restart in that state. It is **not** a stuck or crashed
+  execution and must not be "fixed" by force-failing or manually deleting it.
+- The periodic hard-delete sweep removes it (`pruneData: true`,
+  `pruneDataIntervals.hardDelete: 15` minutes). Observed: rows created at 23:50 and
+  00:02 were both gone by 00:16.
+- `runData` is **empty**, so nothing the child computed is stored. The row carries only
+  the child's *input*. For SW-030 that is `{ storageKey, azureEndpoint, azureModel,
+  signedUrlTtlSeconds, correlationId }` — no URL, no token, no storage host.
+
+So an operator inspecting the database mid-window will see a `running` SW-030 execution
+that never completes. That is expected. Verified on a real production run: the parent's
+persisted payload contained zero occurrences of `token=`, `object/sign`, `supabase.co`,
+`urlSource`, `signedURL`, `service_role` or `Bearer ey`.
+
 ## Sub-workflow I/O contract
 
 - `executeWorkflowTrigger` must use **`inputSource:"passthrough"`** (lowercase
@@ -133,6 +184,31 @@ input instead of the child's output (manifesting as a false HUMAN_REVIEW).
 - The **per-batch sub-workflow refactor** (PLAN → Loop → EXTRACT-ONE → MERGE, OCR
   persisted to Postgres) is designed and deferred to post-v1.0; it removes the
   need for the raised heap.
+
+### Object storage did NOT reduce peak memory — and why
+
+Measured A/B on the same 60-page / ~12.7 MB fixture shape, pre-PR-4 WF-001 (binary
+carried to SW-005) versus PR-4 WF-001 (storage-backed):
+
+| run | peak container memory |
+|---|---|
+| pre-PR-4, binary path | **1591 MiB** |
+| PR-4, storage-backed  | **2192 MiB** |
+
+The storage-backed path used *more*, not less. Do not cite object storage as a
+memory optimisation at this document size. The reason is mechanical: WF-001 sets
+`binaryMode: "separate"`, so n8n already kept the binary **on the filesystem**, never in
+the heap — there was no binary memory pressure to remove. Peak memory in both runs is
+dominated by the OCR result normalisation and SW-008's batch loop, which are identical
+either side of the cutover, and PR-4 additionally does a full-buffer SHA-256 pass and an
+upload in SW-029.
+
+Object storage's justification stands on durability, resumability
+(recover from `storage_key` after a crash) and reference-passing — not on heap use. A
+memory benefit would only appear where the binary genuinely dominates, i.e. files far
+larger than the 50 MB bucket limit currently allows.
+
+Caveat: one run per arm, so this is indicative, not a statistically robust benchmark.
 
 ## Prompt registry
 
