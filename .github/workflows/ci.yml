@@ -22,6 +22,13 @@ jobs:
       - name: Validate workflow JSON (well-formed + static checks)
         run: python3 ci/validate_workflows.py
 
+      # Two 16-value taxonomies exist in the project's history, both labelled
+      # "§438 / R-05". The archived reference implementation still carries the
+      # SUPERSEDED one, so anything ported from it can silently adopt an enum the
+      # database CHECK rejects — which would make SW-015 unable to certify anything.
+      - name: Validate §438 category taxonomy (CHECK ↔ seed ↔ prompt ↔ workflows)
+        run: python3 ci/validate_taxonomy.py
+
   migration-replay:
     name: Migration Replay (PG16 + pgvector)
     runs-on: ubuntu-latest
