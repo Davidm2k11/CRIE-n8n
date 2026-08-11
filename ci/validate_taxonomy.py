@@ -93,12 +93,20 @@ def check_pr001(findings):
     if not hits:
         findings.append("prompts: no PR-001 SQL found")
         return
+    checked = 0
     for path in hits:
         src = open(path, encoding="utf-8").read()
-        m = re.search(r"CATEGORY — assign exactly ONE.*?(?=\n[A-Z]{3,}[ —-])", src, re.S)
+        # Only files that DEFINE the taxonomy are compared. A later additive prompt
+        # version may merely reference the anchor "CATEGORY — assign exactly ONE."
+        # while deriving its body from the previous row (PR-001 v1.3 does exactly
+        # that for the authority-source block); such a file defines no categories
+        # and comparing it would report a false drift.
+        m = re.search(r"CATEGORY — assign exactly ONE\. The allowed set is EXACTLY these 16 values\."
+                      r".*?(?=\n[A-Z]{3,}[ —-])", src, re.S)
         if not m:
-            findings.append(f"{os.path.basename(path)}: no CATEGORY block found")
+            print(f"  skip {os.path.basename(path)} (defines no CATEGORY block)")
             continue
+        checked += 1
         block = m.group(0)
         # The prompt lists "  Name  - description"; take the name before the dash.
         got = []
@@ -107,6 +115,8 @@ def check_pr001(findings):
             if mm:
                 got.append(mm.group(1).strip())
         _compare(f"{os.path.basename(path)} CATEGORY block", got, findings)
+    if checked == 0:
+        findings.append("no PR-001 file defines a CATEGORY block — the guard covers nothing")
 
 
 def _strip_js_comments(js):

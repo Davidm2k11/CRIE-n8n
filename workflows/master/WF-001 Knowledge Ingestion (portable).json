@@ -725,28 +725,6 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT ((SELECT count(*) FROM repository.knowledge_units WHERE document_id='{{$json.documentId}}')>0) AS certified, '{{$json.correlationId}}' AS \"correlationId\", '{{$json.documentId}}'   AS \"documentId\", '{{$json.sha256}}'       AS sha256, '{{$json.filename}}'     AS filename, '{{$json.mimeType}}'     AS \"mimeType\", '{{$json.source}}'       AS source;",
-        "options": {}
-      },
-      "id": "8a62a924-b1cf-416c-a4d0-18ec174f7496",
-      "name": "SW-015 Certification",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [
-        6492,
-        -256
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "36wScZRTy6L3yvWQ",
-          "name": "Postgres account"
-        }
-      },
-      "notes": "SW-015 §255 certification counts (DB read)."
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
         "query": "INSERT INTO monitoring.processing_history (document_id,stage,status,correlation_id) VALUES ('{{$json.documentId}}','Certification','COMPLETED','{{$json.correlationId}}');",
         "options": {}
       },
@@ -755,7 +733,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        6716,
+        7316,
         -256
       ],
       "credentials": {
@@ -794,7 +772,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        6940,
+        7540,
         -256
       ]
     },
@@ -807,7 +785,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        7164,
+        7764,
         -320
       ],
       "notes": "§216 summary."
@@ -821,7 +799,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        7164,
+        7764,
         16
       ],
       "notes": "Generic failure emitter."
@@ -925,6 +903,75 @@
         -400
       ],
       "notes": "PR-4. Emits the reference tuple and drops the binary. Also promotes the byte-derived contentType to mimeType so SW-005 classifies the document by what was actually stored."
+    },
+    {
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// ===== Build SW-015 input (§512/§428) =====\n// The repository writer has committed, so transactionCommitted is known. The units\n// and their evidence/citations are read BY NODE REFERENCE from the validation\n// stage: an executeWorkflow node replaces the item with the child's output, so the\n// bundle is no longer on $json by the time we get here.\nconst w = $json;                                   // SW-014 result (documentId, written, counts)\nconst v = $('SW-009/010/011 Evidence+Cite+Validate').first().json;\nconst ch = $('SW-012 Chunk').first().json;\n\nconst units = v.accepted || v.acceptedUnits || [];\nconst evidence = v.evidence || [];\nconst citations = v.citations || [];\n\nreturn [{ json: Object.assign({}, w, {\n  units, evidence, citations,\n  counts: {\n    document: 1,\n    evidence: evidence.length,\n    citations: citations.length,\n    embeddings: (ch.chunks || []).length,\n  },\n  repositoryVersion: String((w.repositoryVersion != null) ? w.repositoryVersion : 1),\n  transactionCommitted: w.written === true,\n}) }];\n"
+      },
+      "id": "wf001-cert-0000-4000-8000-0001",
+      "name": "Build SW-015 Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6492,
+        -256
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SW015CERTIFY0001",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "wf001-cert-0000-4000-8000-0002",
+      "name": "SW-015 Repository Certification (§255/§512/§428)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        6692,
+        -256
+      ]
+    },
+    {
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// ===== Build certification SQL (§512 lifecycle_state + §511 quality_score) =====\n// SW-015 decides; the repository is where the decision is persisted. Only units\n// from THIS document are touched, and only by id, so certification can never\n// reach another document's knowledge. Units that failed any §512 check keep\n// lifecycle_state 'Draft' (§513 reviewRequired) and are written explicitly rather\n// than left to the column default, so a missed unit is visible as a NULL.\nconst inp = $json;\nconst results = inp.unitResults || [];\nconst cert = inp.certification || null;\nconst lit = (s) => \"'\" + String(s == null ? '' : s).replace(/'/g, \"''\") + \"'\";\n\nconst stmts = ['BEGIN;'];\nfor (const r of results) {\n  if (!r.knowledgeUnitId) continue;\n  stmts.push('UPDATE repository.knowledge_units SET lifecycle_state=' + lit(r.lifecycleState) +\n    ', quality_score=' + Number(r.qualityScore) +\n    ' WHERE id=' + lit(r.knowledgeUnitId) + ';');\n}\nstmts.push('COMMIT;');\n\n// Final SELECT restores the passthrough contract the downstream nodes expect\n// (Certified? reads .certified; Checkpoint Certification reads documentId +\n// correlationId), because a Postgres node replaces the item.\nstmts.push('SELECT ' + (cert && cert.certified === true ? 'true' : 'false') + ' AS certified, ' +\n  lit(inp.correlationId) + ' AS \"correlationId\", ' +\n  lit(inp.documentId) + ' AS \"documentId\", ' +\n  lit(inp.sha256) + ' AS sha256, ' +\n  lit(inp.filename) + ' AS filename, ' +\n  lit(inp.mimeType) + ' AS \"mimeType\", ' +\n  lit(inp.source) + ' AS source;');\n\nreturn [{ json: Object.assign({}, inp, { _certSql: stmts.join('\\n') }) }];\n"
+      },
+      "id": "wf001-cert-0000-4000-8000-0003",
+      "name": "Build Certification SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6892,
+        -256
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json._certSql }}",
+        "options": {}
+      },
+      "id": "wf001-cert-0000-4000-8000-0004",
+      "name": "Apply Certification (§512/§518)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        7092,
+        -256
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "36wScZRTy6L3yvWQ",
+          "name": "Postgres account"
+        }
+      }
     }
   ],
   "pinData": {},
@@ -1219,7 +1266,7 @@
       "main": [
         [
           {
-            "node": "SW-015 Certification",
+            "node": "Build SW-015 Input",
             "type": "main",
             "index": 0
           }
@@ -1238,22 +1285,6 @@
         [
           {
             "node": "Emit FAILED",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "SW-015 Certification": {
-      "main": [
-        [
-          {
-            "node": "Certified?",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Checkpoint Certification",
             "type": "main",
             "index": 0
           }
@@ -1348,6 +1379,55 @@
         [
           {
             "node": "SW-005 Azure OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build SW-015 Input": {
+      "main": [
+        [
+          {
+            "node": "SW-015 Repository Certification (§255/§512/§428)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SW-015 Repository Certification (§255/§512/§428)": {
+      "main": [
+        [
+          {
+            "node": "Build Certification SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Certification SQL": {
+      "main": [
+        [
+          {
+            "node": "Apply Certification (§512/§518)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Certification (§512/§518)": {
+      "main": [
+        [
+          {
+            "node": "Certified?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Checkpoint Certification",
             "type": "main",
             "index": 0
           }
