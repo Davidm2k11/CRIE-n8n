@@ -185,30 +185,46 @@ persisted payload contained zero occurrences of `token=`, `object/sign`, `supaba
   persisted to Postgres) is designed and deferred to post-v1.0; it removes the
   need for the raised heap.
 
-### Object storage did NOT reduce peak memory — and why
+### Object storage does not reduce peak memory — measure RSS, not cgroup usage
 
-Measured A/B on the same 60-page / ~12.7 MB fixture shape, pre-PR-4 WF-001 (binary
-carried to SW-005) versus PR-4 WF-001 (storage-backed):
+Do not cite object storage as a memory optimisation, and do not benchmark it with
+`docker stats`.
 
-| run | peak container memory |
-|---|---|
-| pre-PR-4, binary path | **1591 MiB** |
-| PR-4, storage-backed  | **2192 MiB** |
+**A first attempt at this measurement was wrong and its numbers (1591 vs 2192 MiB)
+must not be reused.** It sampled `docker stats` MemUsage, which is the cgroup's usage
+**including page cache** — and n8n runs `binaryMode: "separate"`, so it writes the
+document to disk and the two arms dirty different amounts of cache. It also ran once per
+arm with no container restart between them, so the V8 high-water mark carried across.
 
-The storage-backed path used *more*, not less. Do not cite object storage as a
-memory optimisation at this document size. The reason is mechanical: WF-001 sets
-`binaryMode: "separate"`, so n8n already kept the binary **on the filesystem**, never in
-the heap — there was no binary memory pressure to remove. Peak memory in both runs is
-dominated by the OCR result normalisation and SW-008's batch loop, which are identical
-either side of the cutover, and PR-4 additionally does a full-buffer SHA-256 pass and an
-upload in SW-029.
+Corrected method: anonymous RSS summed across every container PID (Code nodes execute in
+the **task runner**, a separate process, so the main n8n process alone is not the
+figure), page cache recorded separately, container restarted before every run, arms
+alternated, byte-identical fixtures, three runs per arm. All six runs produced identical
+work: PROCESSED, 96 knowledge units, 96 chunks.
 
-Object storage's justification stands on durability, resumability
-(recover from `storage_key` after a crash) and reference-passing — not on heap use. A
-memory benefit would only appear where the binary genuinely dominates, i.e. files far
-larger than the 50 MB bucket limit currently allows.
+| arm | runs (MiB) | median | min | max | range |
+|---|---|---|---|---|---|
+| PR-4, storage-backed | 2263, 2296, 2305 | 2296 | 2263 | 2305 | 42 |
+| pre-PR-4, binary path | 2363, 1844, 1938 | 1938 | 1844 | 2363 | **519** |
 
-Caveat: one run per arm, so this is indicative, not a statistically robust benchmark.
+The arms **overlap**: the binary path's highest run (2363) exceeds every storage-backed
+run. Its spread (519 MiB) is larger than the median gap (358 MiB), so no meaningful
+regression is established either way. Page cache peaked at only 72–111 MiB.
+
+Why no improvement is possible here: `binaryMode: "separate"` already keeps the original
+**off the heap**, and n8n *streams* it — `HttpRequestV3` calls
+`helpers.getBinaryStream(binaryData.id)` whenever the binary has an id, which is the case
+in filesystem mode, for both the Supabase upload and the legacy Azure submit. The only
+whole-file materialisations are `getBinaryDataBuffer` (needed for magic bytes and the
+digest) and, previously, the hash's padded copy — about 24 MiB total, ~1% of a 2.3 GiB
+peak and far inside run-to-run variance. Peak is dominated by OCR normalisation and
+SW-008's batch loop, which are identical either side of the cutover.
+
+The original acceptance criterion assumed removing `item.binary` from the main path would
+reduce heap. That premise is incompatible with `binaryMode: "separate"`. The criterion was
+amended by Architecture Owner ruling — see
+[`PR4_ACCEPTANCE_RECORD.md`](PR4_ACCEPTANCE_RECORD.md). Object storage's justification
+stands on durability, resumability, reference-passing and integrity, not heap use.
 
 ## Prompt registry
 
