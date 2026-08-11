@@ -93,7 +93,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
+        1100,
         0
       ]
     },
@@ -113,7 +113,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        1100,
+        1320,
         0
       ]
     },
@@ -133,7 +133,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        1320,
+        1540,
         -120
       ],
       "notes": "Pinned by ID (CANONICAL_BASELINE rule 4). Must be ACTIVE on the instance: n8n 2.29.9 refuses executeWorkflow against an inactive child."
@@ -154,7 +154,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        1540,
+        1760,
         0
       ],
       "notes": "Pinned by ID (CANONICAL_BASELINE rule 4). Must be ACTIVE on the instance: n8n 2.29.9 refuses executeWorkflow against an inactive child."
@@ -175,7 +175,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        1760,
+        1980,
         0
       ],
       "notes": "Pinned by ID (CANONICAL_BASELINE rule 4). Must be ACTIVE on the instance: n8n 2.29.9 refuses executeWorkflow against an inactive child."
@@ -190,7 +190,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1980,
+        2200,
         0
       ]
     },
@@ -231,6 +231,42 @@
         260
       ],
       "notes": "Re-establishes the entry payload after the authority lookup."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ ($json.candidates || []).length === 0 && Number($json.retries || 0) < Number(($json.config.emptyRetrieval || {}).maxRetries || 0) }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-wf002-471gate",
+      "name": "§471 Retrieve Again? (empty-retrieval ladder)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        880,
+        -200
+      ],
+      "notes": "§471: retry only while retrieval came back EMPTY and the configured retry budget is not spent. Bounded by maxRetries; the ladder step node always increments, so the loop cannot run away."
+    },
+    {
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// ===== WF-002 §471 Empty-Retrieval Ladder =====\n// Canonical shape, from retrieval_pipeline.py: retrieve; while the candidate set is\n// EMPTY and retries remain, apply ladder[retries] and retrieve again; on exhaustion\n// emit Insufficient Evidence. The step list, the retry budget and the exhaustion\n// behaviour all come from configuration (§305/§471) — no step is invented here, and\n// an unknown step name degrades to a plain retry exactly as the reference does.\n//\n// This node only runs on the empty branch, so a requirement that retrieved something\n// never reaches it and its `retries` stays 0. The LLM is never called here (§471).\nconst inp = $json;\nconst cfg = inp.config || {};\nconst er = cfg.emptyRetrieval || {};\nconst ladder = Array.isArray(er.ladder) ? er.ladder : [];\nconst retries = Number(inp.retries || 0);\nconst step = retries < ladder.length ? ladder[retries] : 'retry';\n\nlet filters = inp.filters || {};\nlet profile = inp.requirementProfile || {};\n\nif (step === 'relaxMetadataFilters') {\n  // §471/§457: drop every derived filter, keeping only the repository-status\n  // constraint that canonical build_metadata_filters always emits.\n  filters = { repositoryStatus: 'Certified' };\n} else if (step === 'expandSynonyms') {\n  // §455 terms were already derived by SW-031; the ladder is where they are folded\n  // into the keyword set, which is why expansion widens recall only when needed.\n  const expanded = inp.expandedTerms || [];\n  if (expanded.length) {\n    profile = Object.assign({}, profile, {\n      keywords: [...new Set((profile.keywords || []).concat(expanded))],\n    });\n  }\n}\n// 'retry' re-runs the identical query, per the canonical ladder.\n\nreturn [{ json: Object.assign({}, inp, {\n  filters,\n  requirementProfile: profile,\n  retries: retries + 1,\n  // Truthful telemetry: which rung ran on which attempt, and whether it could do\n  // anything. A ladder that reports retries without saying what it changed would\n  // look identical to one that silently did nothing.\n  ladderSteps: (inp.ladderSteps || []).concat([{\n    attempt: retries,\n    step,\n    effective: step === 'relaxMetadataFilters'\n      ? Object.keys(inp.filters || {}).length > 0\n      : (step === 'expandSynonyms' ? (inp.expandedTerms || []).length > 0 : false),\n  }]),\n}) }];\n"
+      },
+      "id": "node-wf002-471step",
+      "name": "Apply §471 Ladder Step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        -200
+      ],
+      "notes": "Applies ladder[retries] (retry → relaxMetadataFilters → expandSynonyms) then loops back into SW-018."
     }
   ],
   "connections": {
@@ -271,7 +307,7 @@
       "main": [
         [
           {
-            "node": "Authority + Composite Rank + Dedup (§462/§464/§466)",
+            "node": "§471 Retrieve Again? (empty-retrieval ladder)",
             "type": "main",
             "index": 0
           }
@@ -356,6 +392,35 @@
         [
           {
             "node": "SW-031 Requirement Analyzer (§256/§453-455)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "§471 Retrieve Again? (empty-retrieval ladder)": {
+      "main": [
+        [
+          {
+            "node": "Apply §471 Ladder Step",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Authority + Composite Rank + Dedup (§462/§464/§466)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply §471 Ladder Step": {
+      "main": [
+        [
+          {
+            "node": "SW-018 Hybrid Retriever (§258/§458-460)",
             "type": "main",
             "index": 0
           }
