@@ -185,6 +185,39 @@ persisted payload contained zero occurrences of `token=`, `object/sign`, `supaba
   persisted to Postgres) is designed and deferred to post-v1.0; it removes the
   need for the raised heap.
 
+### The deployed instance was missing the heap setting (found 2026-08-11)
+
+The running container had **no `NODE_OPTIONS` at all**, so Node used its default:
+measured `v8.getHeapStatistics().heap_size_limit` = **2240 MB**. The 216-page
+English SRS died mid-SW-008 with `FATAL ERROR: Ineffective mark-compacts near heap
+limit` at 2047 MB — `ExitCode=0`, `OOMKilled=false`, host memory 6.8 GB free, so it
+was V8's own ceiling, not the kernel or the cgroup.
+
+Note the baseline phrases this as a **worker** setting, but this deployment is a
+single n8n container in **regular mode** — there is no queue, no Redis and no worker
+service. The process that executes workflows is therefore the main n8n process, and
+that is where the setting belongs. After adding it to the `n8n` service the running
+process reports `heap_size_limit` = **6336 MB**. The task runner (a separate process
+that hosts Code nodes) does **not** inherit `NODE_OPTIONS`, so there is no risk of
+two processes each claiming 6 GB.
+
+Queue mode and `N8N_DEFAULT_BINARY_DATA_MODE=filesystem` remain deviations from the
+baseline. Neither is implicated in this failure: the crash was in SW-008, downstream
+of PR-4's storage boundary, where the item carries no binary.
+
+**Measured profile at SRS payload scale** (synthetic boilerplate: 7,668 paragraphs,
+~890 KB lean OCR — 95% of the real SRS's 931 KB — yielding 52 batches):
+peak RSS across *all* node processes **2,364 MB**, of which the executing process
+held **1,433 MB**, i.e. 23% of the 6336 MB ceiling. Under the old 2240 MB limit the
+same run would have sat at ~64%.
+
+That test isolates the *payload/loop-retention* driver. The *output* driver is
+separate and larger per unit: the Arabic manual (2,384 paragraphs, 18 batches) stored
+**123 MB** of execution data against the test's **72.4 MB**, despite one third the
+paragraphs — because it produced 1,803 units and 87k completion tokens versus the
+test's 436 and 15.6k. A real 216-page SRS combines both drivers, so its peak will
+exceed 1,433 MB; run it with heap monitoring rather than assuming the margin holds.
+
 ### Object storage does not reduce peak memory — measure RSS, not cgroup usage
 
 Do not cite object storage as a memory optimisation, and do not benchmark it with
