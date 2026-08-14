@@ -1,0 +1,245 @@
+{
+  "id": "chvkOtVrQfCwh6Mu",
+  "name": "SW-029 Persist Original",
+  "meta": {
+    "crie": {
+      "workflow_id": "SW-029",
+      "title": "Persist Original to Object Storage",
+      "purpose": "Store the original uploaded file exactly once in object storage and record the reference on repository.documents. After this workflow, callers carry only { documentId, sha256, storageKey, correlationId } and never the binary.",
+      "roadmap": "Object Storage PR-2. New artifact: nothing frozen is touched and WF-001 does NOT call this yet — the ingestion cutover is PR-4.",
+      "identifier": "Numbered SW-029, the lowest free id. SW-017 (used illustratively in the roadmap) is already WF-002's Metadata Filter, and SW-016 is already used twice in this repository (Orphan Sweep and WF-002's Requirement Analyzer). A third collision was not created.",
+      "contract": {
+        "input": "{ documentId (UUID, REQUIRED — the row must already exist), correlationId } plus the original file as BINARY on property 'data'.",
+        "output": "{ documentId, sha256, storageKey, storageBucket, contentType, byteSize, storedAt, correlationId, skippedUpload }",
+        "precondition": "repository.documents row for documentId EXISTS. This workflow writes the five storage columns (0030); it does not register documents. Decision D4: the caller generates documentId before the key is computed, because the key embeds it."
+      },
+      "decisions": "D1 columns from migration 0030. D3 document_blobs deferred, so no integrity row is written here. D4 documentId is caller-generated and arrives as input. D5 erasure is out of scope — this workflow never deletes.",
+      "findings_applied": {
+        "H2": "The key's date partition is derived from repository.documents.uploaded_at, NEVER from wall-clock at upload time. Wall-clock would give a re-ingested document a second key under a new date and orphan the first object.",
+        "H3": "An existing storage_key is trusted ONLY after the object is verified present. A non-null key whose object is missing falls through to upload rather than silently skipping.",
+        "H6": "Byte size is gated against CRIE_STORAGE_MAX_BYTES before upload, so an oversized file fails here rather than after the expensive OCR step. Unset means no gate.",
+        "M2": "Verify-on-write: after upload the stored object's reported size is compared to the uploaded byte count. Full re-hash verification belongs to the storage-integrity job (PR-6), not here.",
+        "probeE": "content_type and the key's {ext} are derived from MAGIC BYTES of the downloaded file, never from the Google Drive mimeType. WF-001 downloads with googleFileConversion, so Google-native documents arrive as application/pdf while Drive still reports vnd.google-apps.*.",
+        "probeG": "No signed URL is minted here, so none can reach the execution log. When SW-005 mints one (PR-3) it must be minted and consumed inside a single node — a URL emitted in any node's output is persisted in the executions table."
+      },
+      "runtime_config": "Bucket and endpoint are read from the n8n ENVIRONMENT ($env.CRIE_STORAGE_ENDPOINT, $env.CRIE_STORAGE_BUCKET, $env.CRIE_STORAGE_MAX_BYTES). configuration/storage.yaml remains the authored source of truth (R-08, decision D2); deployment resolves {env} from it and sets these variables, exactly as it already does for $env.CRIE_ADMIN_SCHEDULE_CRON. No secret is read from $env: the storage key is an n8n CREDENTIAL, bound on import.",
+      "credentials_on_import": "BIND BEFORE USE. The two HTTP nodes declare generic header auth with NO credential attached, matching the Azure Document Intelligence pattern — attach the Supabase storage credential after import. The Postgres nodes use the existing CRIE Postgres credential (service_role/owner).",
+      "testing_status": "PENDING INFRASTRUCTURE. The upload and verify paths cannot be executed until a private bucket and a storage credential exist. Everything not requiring them is implemented and statically validated.",
+      "license": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra."
+    }
+  },
+  "nodes": [
+    {
+      "id": "trigger_execute",
+      "name": "When Called by WF-001",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 400],
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "notes": "inputSource:'passthrough' (LOWERCASE t) per the frozen SW I/O contract — the camelCase variant is silently ignored on import and drops the caller's payload including binary. Receives { documentId, correlationId } plus the original file as binary property 'data'."
+    },
+    {
+      "id": "load_row",
+      "name": "Load Document Row",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 400],
+      "alwaysOutputData": true,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id::text AS document_id, sha256, to_char(uploaded_at AT TIME ZONE 'UTC', 'YYYY/MM/DD') AS uploaded_partition, storage_key, storage_bucket FROM repository.documents WHERE id = '{{ $json.documentId }}';",
+        "options": {}
+      },
+      "credentials": { "postgres": { "id": "36wScZRTy6L3yvWQ", "name": "Postgres account" } },
+      "notes": "Reads the authoritative sha256 and the uploaded_at date partition (H2) for the caller's documentId. NOTE ON {{ }}: this is an INTENDED n8n interpolation of a UUID that resolves before the SQL runs (same pattern as SW-016's integer config) — it is NOT a forbidden literal {{token}} placeholder; no literal braces reach Postgres. alwaysOutputData:true so a MISSING row still reaches Prepare Object, which raises a clear error instead of the workflow ending silently on zero items."
+    },
+    {
+      "id": "reattach",
+      "name": "Re-attach Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// MANDATORY Postgres-before-binary-consumer pattern: the Postgres node above\n// replaced the item and dropped item.binary. Re-establish it ONCE, by node\n// reference from the trigger, directly before the consumer.\nreturn [{ json: $json, binary: $('When Called by WF-001').first().binary }];"
+      },
+      "notes": "Binary is re-established exactly once, at the point of use, per the Workflow Engineering Guidelines. Do not iterate this; iterative re-attachment is a symptom, not a fix."
+    },
+    {
+      "id": "prepare",
+      "name": "Prepare Object",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 400],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// SW-029 — compute the storage key and validate the bytes before any upload.\n//\n// Content type and extension come from MAGIC BYTES, never from the Drive\n// mimeType (finding: probe E). The date partition comes from\n// documents.uploaded_at, never from wall-clock (finding H2). The bytes are\n// verified against documents.sha256 before anything is stored (M2b).\n\nconst trig = $('When Called by WF-001').first().json;\nconst row  = $json || {};\n\nif (!row.document_id) {\n  throw new Error('SW-029: no repository.documents row for documentId=' +\n    (trig.documentId || '(missing)') + '. Register the document before persisting its original.');\n}\n\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'data');\nif (!buf || buf.length === 0) {\n  throw new Error('SW-029: binary property \"data\" is empty or absent — the original file did not cross the workflow boundary.');\n}\nconst byteSize = buf.length;\n\n// --- M2b: the bytes MUST be the bytes this document claims to be -------------\n// The object is NAMED for documents.sha256, so storing a buffer that hashes to\n// anything else would file the wrong content under that fingerprint and make\n// every later integrity check compare an object against a hash it never had.\n// Verify-on-write checks size (M2); this checks identity. The Code node has no crypto\n// API, so this is a pure-JS SHA-256 -- but a STREAMING one: it compresses 64-byte\n// blocks straight out of the source buffer and allocates only a fixed 64/128-byte\n// tail. The variant in WF-001's Init builds the padded message as one new array the\n// size of the whole file, which for a 12.7 MB document is a 12.1 MiB allocation whose\n// only purpose is to append nine bytes of padding. Digests are bit-identical; asserted\n// against Node's crypto across 260 cases including every block-boundary edge case.\nfunction sha256Hex(bytes) {\n  const b = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);\n  const K = new Uint32Array([\n    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,\n    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,\n    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,\n    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,\n    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,\n    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,\n    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,\n    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);\n  let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;\n  const w = new Uint32Array(64);\n  const rotr = (x,n) => (x>>>n)|(x<<(32-n));\n\n  // compress one 64-byte block read at `off` from Uint8Array `src`\n  function block(src, off) {\n    for (let i=0;i<16;i++) {\n      const j = off + i*4;\n      w[i] = ((src[j]<<24)|(src[j+1]<<16)|(src[j+2]<<8)|src[j+3])>>>0;\n    }\n    for (let i=16;i<64;i++){\n      const s0=rotr(w[i-15],7)^rotr(w[i-15],18)^(w[i-15]>>>3);\n      const s1=rotr(w[i-2],17)^rotr(w[i-2],19)^(w[i-2]>>>10);\n      w[i]=(w[i-16]+s0+w[i-7]+s1)|0;\n    }\n    let a=h0,b1=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;\n    for (let i=0;i<64;i++){\n      const S1=rotr(e,6)^rotr(e,11)^rotr(e,25);\n      const ch=(e&f)^(~e&g);\n      const t1=(h+S1+ch+K[i]+w[i])|0;\n      const S0=rotr(a,2)^rotr(a,13)^rotr(a,22);\n      const maj=(a&b1)^(a&c)^(b1&c);\n      const t2=(S0+maj)|0;\n      h=g;g=f;f=e;e=(d+t1)|0;d=c;c=b1;b1=a;a=(t1+t2)|0;\n    }\n    h0=(h0+a)|0;h1=(h1+b1)|0;h2=(h2+c)|0;h3=(h3+d)|0;\n    h4=(h4+e)|0;h5=(h5+f)|0;h6=(h6+g)|0;h7=(h7+h)|0;\n  }\n\n  const l = b.length;\n  const full = l - (l % 64);\n  for (let off = 0; off < full; off += 64) block(b, off);      // no copy: read in place\n\n  // tail: remaining bytes + 0x80 + zero pad + 64-bit big-endian bit length.\n  // 128 bytes covers both the one-block and two-block padding cases.\n  const rem = l - full;\n  const tail = new Uint8Array(rem + 9 <= 64 ? 64 : 128);\n  for (let i = 0; i < rem; i++) tail[i] = b[full + i];\n  tail[rem] = 0x80;\n  const bitLen = l * 8;\n  const dv = new DataView(tail.buffer);\n  dv.setUint32(tail.length - 4, bitLen >>> 0, false);\n  dv.setUint32(tail.length - 8, Math.floor(bitLen / 0x100000000), false);\n  for (let off = 0; off < tail.length; off += 64) block(tail, off);\n\n  const hex = x => ('00000000'+(x>>>0).toString(16)).slice(-8);\n  return [h0,h1,h2,h3,h4,h5,h6,h7].map(hex).join('');\n}\n\nconst actualSha = sha256Hex(buf);\nif (String(row.sha256).toLowerCase() !== actualSha) {\n  throw new Error('SW-029: content fingerprint mismatch for documentId=' + row.document_id +\n    '. repository.documents.sha256=' + row.sha256 + ' but the bytes on the wire hash to ' +\n    actualSha + '. Refusing to store: the object key is derived from that hash, so storing ' +\n    'these bytes would file the wrong content under it.');\n}\n\n// --- format: derived from CONTENT, never from the Drive mimeType -------------\n// Google-native documents arrive as PDF (googleFileConversion) while Drive still\n// reports application/vnd.google-apps.* — trusting that value keys the object\n// with the wrong extension and makes SW-005's detectFormat() misclassify it.\nconst hex = (n) => buf.slice(0, n).toString('hex').toUpperCase();\nlet contentType = null, ext = null;\n\nif (buf.slice(0, 4).toString('latin1') === '%PDF')            { contentType = 'application/pdf';  ext = 'pdf'; }\nelse if (hex(8) === '89504E470D0A1A0A')                        { contentType = 'image/png';        ext = 'png'; }\nelse if (hex(3) === 'FFD8FF')                                  { contentType = 'image/jpeg';       ext = 'jpg'; }\nelse if (hex(4) === '49492A00' || hex(4) === '4D4D002A')        { contentType = 'image/tiff';       ext = 'tiff'; }\nelse if (hex(4) === '504B0304' || hex(4) === '504B0506' || hex(4) === '504B0708') {\n  // OOXML is a ZIP. The subtype is still decided from the BYTES, not from metadata:\n  // the part names are stored as plain text in the zip directory, so the presence of\n  // word/ vs xl/ vs ppt/ identifies the format. WF-001 ingests .docx today, so a\n  // narrower allowlist here would regress documents the repository already holds.\n  // A ZIP names its parts twice: in the local file headers at the START and again in\n  // the central directory at the END. Two bounded windows therefore identify the\n  // subtype without materialising the whole file as a string -- buf.toString() on a\n  // 12.7 MB document allocates a multi-megabyte string purely to look for a fixed\n  // marker. If the windows miss (unusually many parts, or a very large central\n  // directory) fall back to the full scan BEFORE throwing, so the bounded path is a\n  // performance shortcut and never a correctness change.\n  const WINDOW = 262144;\n  let probe;\n  if (buf.length <= WINDOW * 2) {\n    probe = buf.toString('latin1');\n  } else {\n    probe = buf.slice(0, WINDOW).toString('latin1') +\n            buf.slice(buf.length - WINDOW).toString('latin1');\n    if (!/word\\/document\\.xml|xl\\/workbook\\.xml|ppt\\/presentation\\.xml/.test(probe)) {\n      probe = buf.toString('latin1');\n    }\n  }\n  if (probe.includes('word/document.xml')) {\n    contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'; ext = 'docx';\n  } else if (probe.includes('xl/workbook.xml')) {\n    contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; ext = 'xlsx';\n  } else if (probe.includes('ppt/presentation.xml')) {\n    contentType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'; ext = 'pptx';\n  } else {\n    throw new Error('SW-029: file is a ZIP container but not a recognised OOXML document ' +\n      '(no word/, xl/ or ppt/ part). Refusing to store an object whose extension cannot be ' +\n      'derived from its content.');\n  }\n}\n\nif (!contentType) {\n  throw new Error('SW-029: unsupported or unrecognised file type (first bytes ' + hex(8) +\n    '). Refusing to store an object whose extension cannot be derived from its content.');\n}\n\n// --- size gate (H6): fail here, not after the expensive OCR step ---\nconst maxBytes = Number($env.CRIE_STORAGE_MAX_BYTES) || 0;\nif (maxBytes > 0 && byteSize > maxBytes) {\n  throw new Error('SW-029: file is ' + byteSize + ' bytes, above CRIE_STORAGE_MAX_BYTES=' + maxBytes + '.');\n}\n\nconst endpoint = ($env.CRIE_STORAGE_ENDPOINT || '').replace(/\\/+$/, '');\nconst bucket   = $env.CRIE_STORAGE_BUCKET || '';\nif (!endpoint || !bucket) {\n  throw new Error('SW-029: CRIE_STORAGE_ENDPOINT and CRIE_STORAGE_BUCKET must be set on the n8n instance (resolved from configuration/storage.yaml).');\n}\n\n// --- key: originals/{yyyy}/{mm}/{dd}/{documentId}/{sha256}.{ext} ---\nconst storageKey = 'originals/' + row.uploaded_partition + '/' + row.document_id + '/' + row.sha256 + '.' + ext;\n\nreturn [{\n  json: {\n    correlationId: trig.correlationId || null,\n    documentId: row.document_id,\n    sha256: row.sha256,\n    storageKey,\n    storageBucket: bucket,\n    storageEndpoint: endpoint,\n    contentType,\n    byteSize,\n    hasExistingKey: !!row.storage_key,\n    existingStorageKey: row.storage_key || null\n  },\n  binary: $input.first().binary\n}];\n"
+      },
+      "notes": "Derives contentType/ext from magic bytes, gates size, and builds the key from uploaded_at + documentId + sha256. Raises rather than storing anything it cannot name correctly — an object keyed with the wrong extension is worse than a failed ingestion. Carries the binary forward for the upload node."
+    },
+    {
+      "id": "if_existing",
+      "name": "Existing key?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1160, 400],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.hasExistingKey }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "notes": "H3: a non-null storage_key is NOT trusted on its own. True -> verify the object really exists; false -> upload."
+    },
+    {
+      "id": "verify_existing",
+      "name": "Verify Existing Object",
+      "credentials": { "httpHeaderAuth": { "id": "qc5C9NOR2HwCTifh", "name": "Supabase Storage (service_role)" } },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 260],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "url": "={{ $json.storageEndpoint }}/storage/v1/object/info/{{ $json.storageBucket }}/{{ $json.existingStorageKey }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": { "response": { "response": { "fullResponse": true, "neverError": true } } }
+      },
+      "notes": "H3: does the object behind the recorded key actually exist? onError + neverError so a 404 becomes data rather than a failure — a missing object must fall through to upload, not abort. BIND the Supabase storage credential on import."
+    },
+    {
+      "id": "if_object_ok",
+      "name": "Existing object present?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1640, 260],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": { "type": "number", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "notes": "True -> the stored original is intact; skip the upload (the duplicate path). False -> the key is stale and the object is gone; upload it."
+    },
+    {
+      "id": "upload",
+      "name": "Upload Original",
+      "credentials": { "httpHeaderAuth": { "id": "qc5C9NOR2HwCTifh", "name": "Supabase Storage (service_role)" } },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 560],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Prepare Object').item.json.storageEndpoint }}/storage/v1/object/{{ $('Prepare Object').item.json.storageBucket }}/{{ $('Prepare Object').item.json.storageKey }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-upsert", "value": "true" },
+            { "name": "content-type", "value": "={{ $('Prepare Object').item.json.contentType }}" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "notes": "Stores the original exactly once. x-upsert:true makes re-uploading identical bytes to the same key a no-op instead of a 409 — required for retries to be safe (PR-0 probe C will confirm the exact semantics). Body is the binary itself; the bytes are never base64-expanded into JSON. BIND the Supabase storage credential on import."
+    },
+    {
+      "id": "verify_stored",
+      "name": "Verify Stored Object",
+      "credentials": { "httpHeaderAuth": { "id": "qc5C9NOR2HwCTifh", "name": "Supabase Storage (service_role)" } },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1640, 560],
+      "parameters": {
+        "url": "={{ $('Prepare Object').item.json.storageEndpoint }}/storage/v1/object/info/{{ $('Prepare Object').item.json.storageBucket }}/{{ $('Prepare Object').item.json.storageKey }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "notes": "M2 verify-on-write. Reads back the stored object's metadata; the next node asserts the size matches what was uploaded. Full re-hash verification is the storage-integrity job (PR-6), deliberately not done here. Unlike the existing-object check this node does NOT swallow errors: a failure to read back what we just wrote must fail the workflow."
+    },
+    {
+      "id": "assert_size",
+      "name": "Assert Stored Size",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1880, 560],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// M2 verify-on-write: the object we just stored must report the size we sent.\nconst prep = $('Prepare Object').item.json;\nconst info = $json || {};\nconst reported = Number(info.size ?? (info.metadata && info.metadata.size));\n\nif (!Number.isFinite(reported)) {\n  throw new Error('SW-029: could not read a size back for ' + prep.storageKey + ' — refusing to record an unverified storage_key.');\n}\nif (reported !== prep.byteSize) {\n  throw new Error('SW-029: stored size ' + reported + ' != uploaded size ' + prep.byteSize +\n    ' for ' + prep.storageKey + ' — refusing to record a storage_key for a corrupt object.');\n}\n\nreturn [{ json: { ...prep, verifiedBytes: reported } }];"
+      },
+      "notes": "Fails closed. If the read-back does not match, no storage_key is written — a document with a NULL key is recoverable; a document pointing at a corrupt object is not."
+    },
+    {
+      "id": "write_columns",
+      "name": "Write Storage Columns",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2120, 560],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE repository.documents SET storage_key = '{{ $json.storageKey }}', storage_bucket = '{{ $json.storageBucket }}', byte_size = {{ $json.byteSize }}, content_type = '{{ $json.contentType }}', stored_at = now() WHERE id = '{{ $json.documentId }}' RETURNING id::text AS document_id, storage_key, storage_bucket, byte_size, content_type, stored_at;",
+        "options": {}
+      },
+      "credentials": { "postgres": { "id": "36wScZRTy6L3yvWQ", "name": "Postgres account" } },
+      "notes": "Writes the five columns added by migration 0030. UPDATE only — this workflow never registers a document (decision D4: the caller owns documentId) and never deletes (decision D5). RETURNING makes the persisted values observable to the caller. NOTE ON {{ }}: intended n8n interpolation, resolved before the SQL runs."
+    },
+    {
+      "id": "return_summary",
+      "name": "Return to Caller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2360, 400],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// Terminal node. Reached by two MUTUALLY EXCLUSIVE paths (uploaded / skipped),\n// so it reads only $json — the current branch's item — and never reaches across\n// branches. See docs/IMPLEMENTATION_NOTES.md 'Execution semantics'.\nconst prep = $('Prepare Object').item.json;\nconst j = $json || {};\nconst skipped = !j.stored_at;\n\nreturn [{ json: {\n  workflow_id: 'SW-029',\n  correlationId: prep.correlationId,\n  documentId: prep.documentId,\n  sha256: prep.sha256,\n  storageKey: skipped ? prep.existingStorageKey : j.storage_key,\n  storageBucket: skipped ? prep.storageBucket : j.storage_bucket,\n  contentType: skipped ? prep.contentType : j.content_type,\n  byteSize: skipped ? prep.byteSize : Number(j.byte_size),\n  storedAt: skipped ? null : j.stored_at,\n  skippedUpload: skipped\n} }];"
+      },
+      "notes": "Emits the reference tuple { documentId, sha256, storageKey, correlationId } plus the stored-object facts. From here the caller carries only this — never the binary."
+    }
+  ],
+  "connections": {
+    "When Called by WF-001": { "main": [[{ "node": "Load Document Row", "type": "main", "index": 0 }]] },
+    "Load Document Row": { "main": [[{ "node": "Re-attach Binary", "type": "main", "index": 0 }]] },
+    "Re-attach Binary": { "main": [[{ "node": "Prepare Object", "type": "main", "index": 0 }]] },
+    "Prepare Object": { "main": [[{ "node": "Existing key?", "type": "main", "index": 0 }]] },
+    "Existing key?": { "main": [
+      [{ "node": "Verify Existing Object", "type": "main", "index": 0 }],
+      [{ "node": "Upload Original", "type": "main", "index": 0 }]
+    ] },
+    "Verify Existing Object": { "main": [[{ "node": "Existing object present?", "type": "main", "index": 0 }]] },
+    "Existing object present?": { "main": [
+      [{ "node": "Return to Caller", "type": "main", "index": 0 }],
+      [{ "node": "Upload Original", "type": "main", "index": 0 }]
+    ] },
+    "Upload Original": { "main": [[{ "node": "Verify Stored Object", "type": "main", "index": 0 }]] },
+    "Verify Stored Object": { "main": [[{ "node": "Assert Stored Size", "type": "main", "index": 0 }]] },
+    "Assert Stored Size": { "main": [[{ "node": "Write Storage Columns", "type": "main", "index": 0 }]] },
+    "Write Storage Columns": { "main": [[{ "node": "Return to Caller", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveDataSuccessExecution": "all", "saveExecutionProgress": true },
+  "pinData": {}
+}

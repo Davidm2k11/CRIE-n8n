@@ -1,0 +1,156 @@
+# =============================================================================
+# CRIE — retrieval.yaml
+# Authored source of truth for retrieval configuration (R-08).
+# Loaded into configuration.* runtime-cache tables by the seed/sync step (§236).
+# Do NOT author values directly in the tables.
+#
+# Spec anchors:
+#   §305  Retrieval Configuration keys
+#   §462  Composite Ranking Formula weights
+#   §454  Metadata Expansion toggle
+#   §455  Synonym Expansion toggle
+#   §469  Token Budget (maximumContextTokens)
+#   R-09  Embedding dimension lock-in (vector(1536)) — informational cross-ref
+#   R-12  §452 canonical ordering; rerank gated by rerankerEnabled (§305)
+#   R-16  9-source authority model (§439); weights configurable
+# License: All Rights Reserved, Copyright © 2026 Dawod Manasra.
+# =============================================================================
+
+schemaVersion: "1.1"
+
+# --- §305 Retrieval Configuration ------------------------------------------
+topK: 50                          # candidates retained after hybrid merge
+# §459 cosine floor for semantic candidates. CALIBRATED against the real 962-unit
+# corpus and text-embedding-3-small; §305 makes this a configuration key precisely so
+# it can be set per deployment, and the authored 0.30 was never measured here.
+#
+# Why 0.30 was not functioning as a floor at all — measured similarity over the WHOLE
+# corpus, per probe requirement (median similarity is 0.21–0.28, i.e. the model's
+# background level on this corpus):
+#     units at >= 0.30 :  R1 349 | R2 224 | R3 412 | R4 169 | R5 6      (of 962)
+#     units at >= 0.45 :  R1 110 | R2  16 | R3 129 | R4   7 | R5 0
+# At 0.30 between 18% and 43% of the entire repository qualifies as "semantically
+# similar" to any requirement; topK truncation, not the floor, was doing the work.
+#
+# Why 0.45 specifically. It is taken from where LEGITIMATE EVIDENCE BEGINS, not from
+# where the negative control disappears:
+#     lowest genuinely relevant unit found : 0.4908  R2, "Visual Indicators are
+#                                            indicators set by the user in terms of
+#                                            colour and levels" (R2's own true
+#                                            evidence spans 0.4908–0.5098)
+#     highest negative-control unit        : 0.4194  R5, "Users can log in using the
+#                                            Windows method" (SAML/SSO has no corpus
+#                                            coverage at all; its whole neighbourhood
+#                                            is password-login material)
+# 0.45 sits near the middle of that 0.4194–0.4908 gap: +7.3% above the highest
+# irrelevant unit, -8.3% below the weakest genuine one. R1's relevant units start at
+# 0.5988 and R3's at 0.5988, so neither is touched.
+minimumSimilarity: 0.45
+metadataFiltering: true           # SW-017 executes before retrieval (§457)
+authorityWeight: 0.25             # authority contribution (mirrors §462 25%)
+rerankerEnabled: false            # R-12/§305 gate; requires crossEncoderModel
+crossEncoderModel: ""             # must be set before enabling rerank (§465)
+maximumContextTokens: 8000        # §469 token budget for Context Package
+
+# --- §456 Retrieval Strategy Selection -------------------------------------
+defaultStrategy: "Hybrid"         # MetadataOnly|KeywordOnly|SemanticOnly|Hybrid
+
+# --- §459 Semantic Retrieval ------------------------------------------------
+distanceMetric: "Cosine"          # Cosine|InnerProduct|L2
+embeddingDimension: 1536          # R-09 v1 lock-in; informational, enforced by SW-013
+
+# --- §458 Keyword Retrieval -------------------------------------------------
+# trigramSearch is FALSE, and that is a behaviour change, not a typo. pg_trgm
+# similarity() scores the WHOLE knowledge unit against the WHOLE query, so it is
+# length-biased: on the real 962-unit corpus a 0.1 floor returned 501/95/338/43
+# units for the four English probe requirements, including the negative control.
+# It was the de-facto keyword arm only because plainto_tsquery ANDs every term and
+# therefore matched nothing. Keyword retrieval is now FTS with OR semantics gated
+# by term coverage (see minimumTermCoverage); re-enabling a trigram arm needs a
+# length-independent formulation (word/lexeme similarity), not this one.
+#
+# ranking: "BM25" is the authored §458 value and is left unchanged. Stock
+# PostgreSQL has no BM25 implementation, so the ranking actually applied is
+# ts_rank_cd (cover density, normalisation flag 32 -> rank/(rank+1)). Pre-existing
+# gap, recorded rather than silently redefined.
+keyword:
+  fullTextSearch: true            # PostgreSQL FTS
+  trigramSearch: false            # pg_trgm — see note above
+  ranking: "BM25"                 # configuration-controlled
+  textSearchConfig: "english"     # text-search configuration for FTS lexemes.
+                                  # Non-Latin requirements never reach this arm:
+                                  # they carry no ASCII tokens, so §456 selects
+                                  # SemanticOnly (multilingual embedding).
+  # --- the two gate values, both measured against the real 962-unit corpus -----
+  # keywordScore is IDF-weighted coverage: the share of the requirement's TOTAL
+  # term information content a unit accounts for. Query terms absent from the
+  # corpus stay in the denominator deliberately — their absence is the evidence
+  # that the corpus does not cover the requirement.
+  #
+  # minimumMatchedTerms is the load-bearing rule. Measured candidate counts for
+  # units matching >= 2 distinct query lexemes:
+  #     R1 custom fields 373 | R2 thresholds 31 | R3 approval 169 | R5 SAML/SSO 0
+  # The negative control is rejected STRUCTURALLY — no unit in the corpus
+  # co-mentions two of {saml, federated, identity, single, sign, support, via,
+  # system} — not by a tuned number. Capped at the query's own lexeme count so a
+  # single-term requirement is still retrievable.
+  #
+  # minimumWeightedCoverage therefore only trims the tail. It sits below R2's
+  # genuine evidence ("threshold for 'less than worst' / 'requires attention' /
+  # 'exceeds target'", weighted coverage 0.1275) with margin, so raising it above
+  # ~0.125 would silently discard that requirement's best material. Measured
+  # kept-counts at 0.10: R1 270, R2 19, R3 169, R5 0 (topK then caps at 50).
+  minimumMatchedTerms: 2
+  minimumWeightedCoverage: 0.10
+
+# --- §462 Composite Ranking Formula (weights SHALL be configurable) ---------
+# NOTE: weights are validated to sum to 1.00 by SW-018/context builder.
+compositeWeights:
+  semanticSimilarity: 0.35
+  authority:          0.25
+  keywordScore:       0.20
+  metadataMatch:      0.10
+  documentFreshness:  0.10
+
+# --- §463 Freshness ---------------------------------------------------------
+# Freshness SHALL NEVER override Authority (§463). This flag only enables the
+# freshness *component* of the composite score; authority precedence is enforced
+# structurally in authority resolution (§440), not via weights.
+freshnessEnabled: true
+freshnessHalfLifeDays: 365
+
+# --- §454 Metadata Expansion / §455 Synonym Expansion toggles --------------
+expansion:
+  metadataExpansion: true         # §454 derive additional filters
+  synonymExpansion: true          # §455 recall improvement
+  acronymNormalization: true      # §453 normalize acronyms before retrieval
+
+# --- §466 Duplicate Detection ----------------------------------------------
+deduplication:
+  semanticSimilarityThreshold: 0.95   # high-similarity duplicate criterion
+
+# --- §469 Token Budget overflow behaviour ----------------------------------
+# If exceeded → lowest-ranked evidence removed first (§469).
+tokenBudget:
+  removalOrder: "lowestRankedFirst"
+
+# --- §471 Empty Retrieval Strategy -----------------------------------------
+# Ordered retry ladder; LLM SHALL NOT be called (§471).
+emptyRetrieval:
+  maxRetries: 3
+  ladder:
+    - "retry"
+    - "relaxMetadataFilters"
+    - "expandSynonyms"
+  onExhaustion: "InsufficientEvidence"
+
+# --- §470 Context Quality components ----------------------------------------
+# Quality score 0.00..1.00; weighting of components used to derive it.
+contextQuality:
+  weights:
+    coverage:             0.30
+    authority:            0.20
+    citationCompleteness: 0.20
+    knowledgeDiversity:   0.15
+    conflictPenalty:      0.10
+    freshness:            0.05

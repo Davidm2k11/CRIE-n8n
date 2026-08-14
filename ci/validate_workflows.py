@@ -23,6 +23,14 @@ Catches, BEFORE deployment, the class of defect that otherwise only surfaces at 
      (e.g. SW-013 still referencing 'Load OCR Provider Settings') indicate a copied
      workflow whose references were not retargeted.
 
+  5. UNRESOLVED SUB-WORKFLOW REFERENCES
+     Every executeWorkflow node must carry a BINDABLE workflowId. A symbolic CRIE label
+     ("SW-016") is a roadmap-skeleton placeholder, not an n8n workflow ID: n8n cannot
+     resolve it, and when the node also carries onError/continueOnFail the failure is
+     SILENT — the caller's own input passes straight through as if it were the child's
+     output. That is the WF-005 PR-1 defect and the same class as the documented #1
+     deployment failure (binding drift). Empty/missing bindings are caught too.
+
 Exit code 0 = clean, 1 = findings. Intended for CI and for the pre-deployment gate.
 
 Usage:
@@ -59,6 +67,9 @@ NO_PROMPT = {"SW-005", "SW-013", "SW-014"}
 
 NODE_REF = re.compile(r"\$\(\s*['\"](?P<name>[^'\"]+)['\"]\s*\)")
 PROMPT_REF = re.compile(r"PR-\d{3}")
+# A CRIE workflow LABEL (what the roadmap skeletons use as a placeholder binding).
+# Never a real n8n workflow ID — those are 16-char nanoids (e.g. 'YZqANTvkl1N97JiM').
+CRIE_LABEL = re.compile(r"^(SW|WF|UT)-\d{3}$")
 
 
 TRIGGER_TYPES = (
@@ -274,6 +285,180 @@ def validate(path):
                 f"typeVersion >= 1.1 (found {tv})"
             )
 
+    # ---- 6: executeWorkflow binding is RESOLVABLE ----
+    # An unbindable reference is invisible at import time and, when the node carries
+    # onError/continueOnFail, invisible at RUN time too: n8n emits the caller's own
+    # input in place of the child's output. Downstream logic then reasons about the
+    # wrong payload (WF-005 PR-1: "Orphan sweep did not complete" while SW-016 was
+    # in fact healthy). Bindings are pinned by ID per CANONICAL_BASELINE rule 4.
+    for n in nodes:
+        if n.get("type") != "n8n-nodes-base.executeWorkflow":
+            continue
+        wid = n.get("parameters", {}).get("workflowId")
+        swallows = n.get("onError") in ("continueRegularOutput", "continueErrorOutput") \
+            or n.get("continueOnFail") is True
+        silently = (" The node also swallows errors (onError/continueOnFail), so this "
+                    "fails SILENTLY at runtime and the caller's own input flows "
+                    "downstream as if it were the child's output.") if swallows else ""
+
+        if wid is None or wid == "":
+            findings.append(
+                f"EXEC BINDING [{n['name']}] has no workflowId — the sub-workflow call "
+                f"cannot resolve.{silently}"
+            )
+        elif isinstance(wid, str):
+            if CRIE_LABEL.match(wid.strip()):
+                findings.append(
+                    f"EXEC BINDING [{n['name']}] workflowId is the symbolic placeholder "
+                    f"'{wid}' — a CRIE label, NOT an n8n workflow ID (those are 16-char "
+                    f"nanoids). n8n can never resolve it.{silently} Pin the node by ID "
+                    f"(workflowId: {{__rl:true, mode:'id', value:'<id>'}})."
+                )
+            else:
+                findings.append(
+                    f"NOTE         [{n['name']}] workflowId is a bare string '{wid}' "
+                    f"(legacy typeVersion-1 shape). Cannot be verified statically; prefer "
+                    f"the resource-locator form {{__rl:true, mode:'id', value:'<id>'}}."
+                )
+        elif isinstance(wid, dict):
+            mode, val = wid.get("mode"), (wid.get("value") or "")
+            if not val:
+                findings.append(
+                    f"EXEC BINDING [{n['name']}] workflowId resource-locator has an empty "
+                    f"'value' — nothing to bind to.{silently}"
+                )
+            elif CRIE_LABEL.match(str(val).strip()):
+                findings.append(
+                    f"EXEC BINDING [{n['name']}] workflowId value is the symbolic placeholder "
+                    f"'{val}', not an n8n workflow ID.{silently}"
+                )
+            elif mode == "list":
+                findings.append(
+                    f"NOTE         [{n['name']}] workflowId binds with mode:'list' "
+                    f"(name-cached). If the instance holds more than one workflow of that "
+                    f"name, this can resolve to a STALE copy — the documented #1 deployment "
+                    f"failure. mode:'id' is the pinned form (CANONICAL_BASELINE rule 4)."
+                )
+
+    # ---- 8: Set node parameter shape must match its declared typeVersion ----
+    # n8n SILENTLY DISCARDS a parameter the declared typeVersion does not know. A Set node
+    # authored with the v3.3+ 'assignments' shape but declaring typeVersion 3 imports with
+    # parameters reduced to {options} — a no-op PASSTHROUGH that emits its input unchanged.
+    # Nothing errors; the workflow just runs with every assigned field missing. Observed on
+    # n8n 2.29.9: SW-016's Initialize never set staleMinutes/batchLimit, so the sweep ran as
+    # sweep_orphaned_documents(undefined, undefined); WF-005's Initialize never set
+    # correlation_id, so alerts persisted with correlation_id NULL.
+    # Same defect class as the camelCase 'passThrough' trigger trap (check 5).
+    SET_SHAPES = (
+        # (parameter key, minimum typeVersion, maximum exclusive, label)
+        ("assignments", 3.3, None, "assignments (v3.3+)"),
+        ("fields",      3.0, 3.3,  "fields (v3.0-3.2)"),
+        ("values",      1.0, 3.0,  "values (v1-v2)"),
+    )
+    for n in nodes:
+        if n.get("type") != "n8n-nodes-base.set":
+            continue
+        params = n.get("parameters", {}) or {}
+        tv = float(n.get("typeVersion", 1))
+        for key, lo, hi, label in SET_SHAPES:
+            if key not in params:
+                continue
+            if tv < lo or (hi is not None and tv >= hi):
+                findings.append(
+                    f"SET SCHEMA   [{n['name']}] declares typeVersion {n.get('typeVersion')} but uses "
+                    f"the '{key}' parameter — the {label} shape. n8n DISCARDS the unrecognised "
+                    f"parameter on import, leaving a SILENT NO-OP passthrough: every field this node "
+                    f"claims to set is missing downstream, with no error. "
+                    f"Set typeVersion to {lo} or higher"
+                    + (f" (below {hi})" if hi is not None else "")
+                    + " to match the shape."
+                )
+            break
+
+    # ---- 9: a node that declares an authentication type must actually BIND a credential ----
+    # A node can declare `authentication: genericCredentialType` + `genericAuthType:
+    # httpHeaderAuth` and carry NO `credentials` object at all. Nothing in the JSON looks
+    # wrong, the file imports cleanly, and every static check here passes — but at runtime
+    # the node has no credential to send and the request fails (or, worse, goes out
+    # unauthenticated). Observed in the shipped set: SW-029's three Supabase Storage calls
+    # and SW-030's 'Mint Signed URL' all declared httpHeaderAuth with nothing bound, because
+    # the credential did not exist yet when they were authored. This is the credential-side
+    # twin of check 6: a reference that cannot resolve, invisible until it runs.
+    AUTH_DECL = {
+        # parameters.authentication -> the parameter naming the required credential key
+        "genericCredentialType": "genericAuthType",
+        "predefinedCredentialType": "nodeCredentialType",
+    }
+    for n in nodes:
+        params = n.get("parameters", {}) or {}
+        auth = params.get("authentication")
+        key_param = AUTH_DECL.get(auth)
+        if not key_param:
+            continue
+        needed = params.get(key_param)
+        if not needed:
+            findings.append(
+                f"CRED BINDING [{n['name']}] declares authentication '{auth}' but has no "
+                f"'{key_param}', so the required credential type is undetermined."
+            )
+            continue
+        bound = n.get("credentials") or {}
+        entry = bound.get(needed) or {}
+        if not entry.get("id"):
+            findings.append(
+                f"CRED BINDING [{n['name']}] declares authentication '{auth}' with "
+                f"{key_param}='{needed}', but binds NO credential of that type "
+                f"(credentials.{needed}.id is absent). The node imports cleanly and every "
+                f"other static check passes; it fails only when it runs. Bind the credential "
+                f"by ID."
+            )
+
+    # ---- 10: the workflow artifact must carry a top-level id ----
+    # `n8n import:workflow` is the only deployment path that is idempotent — it PRESERVES
+    # the id in the file and updates that workflow in place. An artifact with no id cannot
+    # use it at all: the import aborts with
+    #   SQLITE_CONSTRAINT: NOT NULL constraint failed: workflow_entity.id
+    # leaving UI import as the only route, and UI import MINTS A NEW ID every time. That is
+    # exactly how this instance accumulated 8 copies of WF-001 and 2 of SW-005, and how a
+    # mode:'list' binding comes to resolve against a stale copy (check 6).
+    # An id-less artifact is therefore undeployable by the supported path, not merely untidy.
+    wf_id = (wf.get("id") or "").strip() if isinstance(wf.get("id"), str) else wf.get("id")
+    if not wf_id:
+        findings.append(
+            "WF IDENTITY  workflow has no top-level 'id'. `n8n import:workflow` rejects it "
+            "(NOT NULL constraint on workflow_entity.id), so it can only be imported through "
+            "the UI, which mints a NEW id on every import and leaves a duplicate copy behind. "
+            "Record the id the artifact deploys as."
+        )
+
+    # ---- 7: multi-parent nodes that read the whole input (WARNING, not an error) ----
+    # A node with multiple incoming parents executes ONCE PER INCOMING BRANCH, so
+    # $input.all() returns only the CURRENT branch's items. Code that reasons across
+    # branches — especially about the ABSENCE of another branch's data — is unsound.
+    # This is a WARNING, not an error: for a loop-back or a mutually-exclusive
+    # convergence only one parent ever delivers, and $input.all() is then legitimate.
+    # The author must confirm which case applies.
+    parent_count = {}
+    for tgt, srcs in preds.items():
+        parent_count[tgt] = len(srcs)
+    for n in nodes:
+        if parent_count.get(n["name"], 0) < 2:
+            continue
+        blob = node_blob(n)
+        used = [tok for tok in ("$input.all(", "$items(") if tok in blob]
+        if not used:
+            continue
+        findings.append(
+            f"WARN         [{n['name']}] has {parent_count[n['name']]} incoming parents and "
+            f"calls {', '.join(used)}. A multi-parent node executes ONCE PER INCOMING "
+            f"BRANCH, so this returns only the CURRENT branch's items — not all branches "
+            f"merged. Safe if the parents are mutually exclusive (IF branches, loop-back, "
+            f"alternate triggers); UNSOUND if they run in parallel and the code reasons "
+            f"across branches (especially about another branch's absence). Verify which "
+            f"applies; for parallel fan-in use $json / branch-local logic, or an explicit "
+            f"Merge. See docs/IMPLEMENTATION_NOTES.md 'Execution semantics'."
+        )
+
     # ---- 3 & 4: prompt reference correctness ----
     prompts_used = set()
     for n in nodes:
@@ -365,15 +550,24 @@ def main():
     print("CRIE workflow static validation")
     print(f"active set from: {source}")
     print("=" * 72)
+    # NOTE = informational, WARN = potentially unsafe (author must confirm). Neither
+    # fails the build; only hard findings do.
+    advisory = ("NOTE", "WARN")
     for p in paths:
         name, ncount, findings = validate(p)
-        errs = [f for f in findings if not f.startswith("NOTE")]
+        errs = [f for f in findings if not f.startswith(advisory)]
+        warns = [f for f in findings if f.startswith("WARN")]
         status = "OK" if not errs else f"{len(errs)} ERROR(S)"
-        if not errs and findings: status = f"OK ({len(findings)} note(s))"
+        if not errs and findings:
+            bits = []
+            if warns: bits.append(f"{len(warns)} warning(s)")
+            notes = len(findings) - len(errs) - len(warns)
+            if notes: bits.append(f"{notes} note(s)")
+            status = f"OK ({', '.join(bits)})"
         print(f"\n{name}  ({ncount} nodes) — {status}")
         for f in findings:
             print(f"   x {f}")
-        total += len([f for f in findings if not f.startswith("NOTE")])
+        total += len(errs)
 
     print("\n" + "=" * 72)
     if total:

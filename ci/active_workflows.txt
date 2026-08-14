@@ -10,13 +10,28 @@
 #   - '#' comments and blank lines are ignored.
 #   - Recursive '**' is supported.
 #
-# EXCLUDED BY DESIGN: the roadmap skeletons WF-002 / WF-003 / WF-004 / WF-005 are
-# intentional placeholder stubs, not production workflows; validating them as if
-# they were would raise false failures (dead nodes / no trigger path). Add them
-# here once they become real, wired workflows.
+# EXCLUDED BY DESIGN: the roadmap skeletons WF-003 / WF-004 are intentional placeholder
+# stubs, not production workflows; validating them as if they were would raise false
+# failures (dead nodes / no trigger path, and the placeholder executeWorkflow bindings
+# they use by convention). Add them here once they become real, wired workflows.
+#
+# WF-002 was in that list until it was implemented. It is now a real, wired workflow
+# whose sub-workflow calls are pinned by ID, so it is validated like WF-001.
 
-# WF-001 Knowledge Ingestion (the one implemented master workflow)
+# WF-001 Knowledge Ingestion
 workflows/master/WF-001*.json
+
+# WF-002 Enterprise Retrieval — emits the Context Package (§294/§76). Its sub-workflows
+# (SW-017/018/019/020/021 and SW-031) are matched by the subworkflows glob below.
+workflows/master/WF-002_Enterprise_Retrieval.json
+
+# WF-005 Administration — HELD OUT, pending a decision, NOT because it is a skeleton.
+# It is fully wired as of the PR-1 slice and is exactly the workflow the unresolved-binding
+# guard exists to protect. But its Orphan Sweep node still carries the placeholder binding
+# 'SW-016', which that guard (correctly) fails on, and the repository must not adopt an
+# instance-specific workflow ID ahead of the deferred canonical-ID ADR. Add this line back
+# the moment the repo-side binding form is decided — see ci/README.md.
+# workflows/master/WF-005_Administration.json
 
 # All shipped sub-workflows (WF-001 SWs + SW-016 Orphan Sweep under WF-005 SWs)
 workflows/subworkflows/**/*.json

@@ -1,0 +1,58 @@
+{
+  "id": "SW015CERTIFY0001",
+  "name": "SW-015 Repository Certification",
+  "meta": {
+    "crie": {
+      "workflow_id": "SW-015",
+      "purpose": "Compute §512 per-knowledge-unit and §428/§527 per-document certification decisions, plus the §511 quality score. Writes nothing; the repository writer persists lifecycle_state/quality_score (§512 is a pre-insertion gate).",
+      "canonical_source": "crie-canonical-v1.0.2/workflows/shared/repository_certification.js",
+      "deviation": "CATEGORY_ENUM uses the canonical §438 (R-05) list, not the reference's superseded §415/§504 list — see docs/SRD_CHANGES_SINCE_SPEC.md section D."
+    }
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "sw015-0000-4000-8000-000000000001",
+      "name": "When Called by WF-001",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// =============================================================================\n// SW-015 Repository Certification (§255)\n//\n// Faithful port of the canonical reference implementation\n//   crie-canonical-v1.0.2/workflows/shared/repository_certification.js\n// covering §55/§428/§512/§527 certification, §511 quality score, §518 lifecycle\n// states and §519 versioning. Weights, thresholds and the seven checks are\n// TRANSCRIBED, not re-derived: no certification condition is invented here.\n//\n// ONE DELIBERATE DEVIATION FROM THE REFERENCE — the category enum.\n// The reference declares a 16-value CATEGORY_ENUM labelled \"§438 (R-05)\" that is\n// in fact the SUPERSEDED §415/§504 taxonomy (Capability, BusinessRule, DataModel,\n// … Other). docs/SRD_CHANGES_SINCE_SPEC.md section D records that list as\n// superseded and the §438 enum below as canonical; migration 0018's CHECK, the\n// 0017 seed of configuration.knowledge_categories, PR-001 v1.2 and the canonical\n// package's OWN migration 0018 all carry the §438 list, and all 962 knowledge\n// units in the repository use it. Porting the reference's constant verbatim would\n// make validCategory FALSE for every unit and nothing could ever be certified.\n// ci/validate_taxonomy.py guards this file against that regression.\n//\n// This sub-workflow COMPUTES certification decisions and writes nothing. §512 is a\n// pre-insertion gate (docs/architecture/Repository.md), so the per-unit decision\n// must be available BEFORE the repository write persists lifecycle_state; the\n// document-level result needs transactionCommitted and is therefore only computed\n// once the caller supplies it. Retro-certifying already-persisted units is NOT a\n// canonical operation and is not implemented.\n// =============================================================================\n\n// §438 canonical 16-value category enum (R-05). MUST match, character for\n// character: repository.knowledge_units CHECK chk_knowledge_units_category\n// (migration 0018), configuration.knowledge_categories (0017), and PR-001.\n// NOTE the SPACES in 'Business Rule' and 'Known Issue'. There is no 'Other'.\nconst CATEGORY_ENUM = Object.freeze([\n  'Feature', 'Business Rule', 'Requirement', 'Limitation', 'Configuration',\n  'Permission', 'Calculation', 'Workflow', 'Notification', 'Integration',\n  'Reporting', 'Security', 'API', 'Architecture', 'Known Issue', 'Recommendation',\n]);\n\n// §518 Knowledge Unit lifecycle states (migration 0018 CHECK).\nconst LIFECYCLE = Object.freeze({\n  DRAFT: 'Draft', VALIDATED: 'Validated', CERTIFIED: 'Certified',\n  DEPRECATED: 'Deprecated', ARCHIVED: 'Archived',\n});\n\n// §511 default quality weights and §512 default threshold, transcribed from the\n// canonical reference. Overridable via config.repository (Principle 7).\nconst DEFAULT_WEIGHTS = Object.freeze({\n  ocrConfidence: 0.25, citationCompleteness: 0.2, structuralQuality: 0.15,\n  statementClarity: 0.15, categoryConfidence: 0.15, duplicateProbability: 0.1,\n});\nconst DEFAULT_THRESHOLD = 0.6;\n\nconst clamp = (x) => Math.max(0, Math.min(1, x));\n\n// --- §511 Knowledge Quality Score (0.00 -> 1.00), deterministic ---------------\nfunction computeQualityScore(ku, ctx, config) {\n  const w = (config.repository && config.repository.qualityWeights) || DEFAULT_WEIGHTS;\n\n  const ocrConfidence = clamp(ctx.ocrConfidence == null ? 1 : ctx.ocrConfidence);\n  const citationCompleteness = ctx.citationCount > 0 ? 1 : 0;\n  const structuralQuality = (ku.sourcePage != null && ku.sourceParagraph != null) ? 1 : 0.5;\n  const len = String(ku.statement || '').trim().length;\n  const statementClarity = clamp(len === 0 ? 0 : len < 12 ? 0.4 : len > 400 ? 0.6 : 1);\n  const categoryConfidence = CATEGORY_ENUM.includes(ku.category) ? 1 : 0;\n  const duplicateProbability = clamp(ctx.duplicateProbability == null ? 0 : ctx.duplicateProbability);\n\n  const score =\n    w.ocrConfidence * ocrConfidence +\n    w.citationCompleteness * citationCompleteness +\n    w.structuralQuality * structuralQuality +\n    w.statementClarity * statementClarity +\n    w.categoryConfidence * categoryConfidence +\n    w.duplicateProbability * (1 - duplicateProbability);\n\n  const total = Object.values(w).reduce((a, b) => a + b, 0);\n  return Math.round((score / total) * 100) / 100;\n}\n\n// --- §512 Per-Knowledge-Unit certification checklist --------------------------\n// A unit failing ANY check stays Draft and is flagged reviewRequired (§513); it\n// never enters retrieval. Certification is never partial.\nfunction certifyKnowledgeUnit(ku, ctx, config) {\n  const threshold = (config.repository && config.repository.qualityThreshold != null)\n    ? config.repository.qualityThreshold : DEFAULT_THRESHOLD;\n  const quality = computeQualityScore(ku, ctx, config);\n  const checks = {\n    atomicStatement: !!(ku.statement && String(ku.statement).trim()),\n    validCategory: CATEGORY_ENUM.includes(ku.category),          // R-05\n    authorityAssigned: !!ku.authoritySource,                     // §439\n    evidenceExists: ctx.evidenceCount > 0,\n    citationExists: ctx.citationCount > 0,                       // R-06\n    duplicateCheckPassed: !ctx.isDuplicate,\n    qualityAboveThreshold: quality >= threshold,\n  };\n  const certified = Object.values(checks).every(Boolean);\n  return {\n    knowledgeUnitId: ku.id,\n    certified,\n    qualityScore: quality,\n    lifecycleState: certified ? LIFECYCLE.CERTIFIED : LIFECYCLE.DRAFT,\n    checks,\n    reviewRequired: !certified,   // §513 uncertain knowledge is not auto-certified\n  };\n}\n\n// --- §428 / §527 Document-level Repository Certification ---------------------\nfunction certifyDocument(args) {\n  const unitResults = args.unitResults || [];\n  const counts = args.counts || {};\n  const certifiedUnits = unitResults.filter((r) => r.certified);\n  const checks = {\n    repositoryStructure: counts.document === 1,\n    knowledgeQuality: certifiedUnits.length > 0,\n    evidenceQuality: counts.evidence > 0,\n    citationCompleteness: counts.citations > 0,\n    embeddingAvailability: counts.embeddings > 0,\n    versionIntegrity: !!args.repositoryVersion,\n    transactionSuccess: args.transactionCommitted === true,\n  };\n  const certified = Object.values(checks).every(Boolean);\n  const qualityScore = certifiedUnits.length\n    ? Math.round((certifiedUnits.reduce((a, r) => a + r.qualityScore, 0) / certifiedUnits.length) * 100) / 100\n    : 0;\n  return {\n    repositoryVersion: args.repositoryVersion || '',\n    certified,\n    certificationDate: new Date().toISOString(),\n    qualityScore,\n    checks,\n    certifiedUnits: certifiedUnits.length,\n    totalUnits: unitResults.length,\n  };\n}\n\n// ===== SW-015 entry ==========================================================\nconst inp = $('When Called by WF-001').first().json;\nconst config = inp.config || {};\nconst units = inp.units || inp.accepted || inp.acceptedUnits || [];\nif (!Array.isArray(units)) {\n  throw new Error('SW-015: `units` must be an array of knowledge units to certify.');\n}\n\n// Per-unit context is DERIVED from the same bundle the repository writer receives,\n// so certification cannot disagree with what is about to be persisted.\nconst evidence = inp.evidence || [];\nconst citations = inp.citations || [];\nconst evidenceByKu = new Map();\nfor (const e of evidence) {\n  if (!evidenceByKu.has(e.knowledgeUnitId)) evidenceByKu.set(e.knowledgeUnitId, []);\n  evidenceByKu.get(e.knowledgeUnitId).push(e);\n}\nconst citationsByEvidence = new Set(citations.map((c) => c.evidenceId));\nconst duplicateKuIds = new Set(inp.duplicateKuIds || []);\n\nconst unitResults = units.map((ku) => {\n  const kuEvidence = evidenceByKu.get(ku.id) || [];\n  const ctx = {\n    evidenceCount: kuEvidence.length,\n    citationCount: kuEvidence.filter((e) => citationsByEvidence.has(e.id)).length,\n    isDuplicate: duplicateKuIds.has(ku.id),\n    // Absent inputs fall back to the canonical reference's own defaults\n    // (ocrConfidence ?? 1, duplicateProbability ?? 0) — not to invented values.\n    ocrConfidence: inp.ocrConfidence,\n    duplicateProbability: ku.duplicateProbability,\n  };\n  return certifyKnowledgeUnit(ku, ctx, config);\n});\n\n// §428/§527 needs transactionCommitted; until the caller supplies it the document\n// phase has not happened yet and is reported as null rather than guessed.\nconst certification = (inp.transactionCommitted === undefined)\n  ? null\n  : certifyDocument({\n      documentId: inp.documentId,\n      repositoryVersion: inp.repositoryVersion,\n      unitResults,\n      counts: inp.counts || {},\n      transactionCommitted: inp.transactionCommitted,\n    });\n\nreturn [{ json: Object.assign({}, inp, {\n  unitResults,\n  certification,\n  certificationSummary: {\n    totalUnits: unitResults.length,\n    certifiedUnits: unitResults.filter((r) => r.certified).length,\n    reviewRequired: unitResults.filter((r) => r.reviewRequired).length,\n    documentCertified: certification ? certification.certified : null,\n  },\n}) }];\n"
+      },
+      "id": "sw015-0000-4000-8000-000000000002",
+      "name": "Certify (§511/§512/§428/§527)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "When Called by WF-001": {
+      "main": [
+        [
+          {
+            "node": "Certify (§511/§512/§428/§527)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

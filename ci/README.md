@@ -15,7 +15,38 @@ surface at runtime:
   silently ignores (must be lowercase `passthrough`, `typeVersion ≥ 1.1`),
 - IF/Switch v2 nodes with a malformed (flat-array) `conditions` that evaluates
   vacuously TRUE,
-- prompt-load correctness (SW-007 → PR-002, SW-008 → PR-001; SW-005/013/014 → none).
+- prompt-load correctness (SW-007 → PR-002, SW-008 → PR-001; SW-005/013/014 → none),
+- **unresolvable `executeWorkflow` bindings** — a symbolic CRIE label (`"SW-016"`) is a
+  roadmap-skeleton placeholder, not an n8n workflow ID, so the call can never resolve;
+  empty resource-locator values are caught too. When the node *also* carries
+  `onError`/`continueOnFail` the finding says so explicitly, because that combination
+  fails **silently at runtime**: n8n emits the caller's own input in place of the child's
+  output and downstream logic reasons about the wrong payload. This was the WF-005 PR-1
+  defect (a false "Orphan sweep did not complete" while SW-016 was healthy) and is the
+  same class as the documented #1 deployment failure. `mode:'list'` (name-cached)
+  bindings are reported as a **note**, not an error — they are the frozen WF-001
+  convention, but they resolve by name and can silently pick a stale duplicate.
+- **multi-parent nodes that read the whole input** (`$input.all(` / `$items(`) — reported
+  as a **warning**, not an error. A node with multiple incoming parents executes once per
+  incoming branch, so `$input.all()` returns only the current branch's items. That is
+  perfectly safe for a loop-back or a mutually-exclusive convergence (only one parent ever
+  delivers) and unsound for a parallel fan-in whose code reasons across branches — so the
+  validator explains both readings and asks the author to confirm which applies, rather
+  than assuming every use is wrong. See `docs/IMPLEMENTATION_NOTES.md`,
+  "Execution semantics".
+
+- **Set nodes whose parameter shape does not match their declared `typeVersion`** — n8n silently
+  *discards* a parameter the declared version does not know, so a Set node authored with the
+  v3.3+ `assignments` shape but declaring `typeVersion: 3` imports as a **no-op passthrough**:
+  every field it claims to set is simply missing downstream, with no error anywhere. Found in
+  production on n8n 2.29.9 — `SW-016`'s `Initialize` never set `staleMinutes`/`batchLimit`, so
+  the sweep ran as `sweep_orphaned_documents(undefined, undefined)`, and `WF-005`'s `Initialize`
+  never set `correlation_id`, so alerts persisted with `correlation_id NULL`. The check maps each
+  shape (`assignments` → ≥3.3, `fields` → 3.0–3.2, `values` → <3.0) to its permitted version range.
+
+### Finding severities
+`ERROR` fails the build. `WARN` is potentially unsafe and needs author confirmation;
+`NOTE` is informational. Neither advisory level changes the exit code.
 
 **Scope — configuration-driven.** Which workflows count as "active" is defined in a
 single file, **`ci/active_workflows.txt`** — a manifest of glob patterns (one per
@@ -28,10 +59,19 @@ To bring a new production workflow under validation, **add a line to
 `ci/active_workflows.txt`** — do not edit `ci.yml` or the runners.
 
 The manifest currently covers `workflows/master/WF-001*.json` and
-`workflows/subworkflows/**/*.json` (which includes `SW-016 Orphan Sweep`). The
-roadmap **skeletons** (`WF-002/003/004/005`) are intentional placeholder stubs, not
-production workflows; validating them as if they were would raise false failures, so
-they are deliberately absent from the manifest until they become real workflows.
+`workflows/subworkflows/**/*.json` (which includes `SW-016 Orphan Sweep`). The roadmap
+**skeletons** (`WF-002/003/004`) are intentional placeholder stubs, not production
+workflows; validating them as if they were would raise false failures (dead nodes, and
+the placeholder bindings they use by convention), so they stay out of the manifest until
+they become real workflows.
+
+**WF-005 is held out for a different reason** and is commented out in the manifest with
+that reason recorded. It is *not* a skeleton — it is fully wired, and it is precisely the
+workflow the binding guard exists to protect. It is held out because its Orphan Sweep node
+still carries the unresolvable placeholder `"SW-016"`, which the guard correctly fails on,
+and the repository must not adopt an instance-specific workflow ID ahead of the deferred
+canonical-ID ADR. Whichever repo-side binding form that decision produces, WF-005 goes
+back into the manifest at that point.
 
 ### 2. Migration replay — `ci/replay/` + the chain
 Proves the migration chain reproduces the database from empty, on real

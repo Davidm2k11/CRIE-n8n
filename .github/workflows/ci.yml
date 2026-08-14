@@ -22,6 +22,20 @@ jobs:
       - name: Validate workflow JSON (well-formed + static checks)
         run: python3 ci/validate_workflows.py
 
+      # Two 16-value taxonomies exist in the project's history, both labelled
+      # "§438 / R-05". The archived reference implementation still carries the
+      # SUPERSEDED one, so anything ported from it can silently adopt an enum the
+      # database CHECK rejects — which would make SW-015 unable to certify anything.
+      - name: Validate §438 category taxonomy (CHECK ↔ seed ↔ prompt ↔ workflows)
+        run: python3 ci/validate_taxonomy.py
+
+      # Executes the REAL collect() source out of the SW-008 artifact against a fake model, so
+      # the adaptive finish_reason=length path is exercised on every change without spending
+      # OpenAI credits. Guards the property that one dense batch must not destroy a whole
+      # document extraction.
+      - name: SW-008 adaptive batch-split behaviour
+        run: node ci/test_sw008_split.js
+
   migration-replay:
     name: Migration Replay (PG16 + pgvector)
     runs-on: ubuntu-latest

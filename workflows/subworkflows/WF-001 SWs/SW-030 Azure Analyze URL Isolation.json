@@ -1,0 +1,112 @@
+{
+  "id": "w0JADswpeOxRtPEZ",
+  "name": "SW-030 Azure Analyze (URL isolation)",
+  "meta": {
+    "crie": {
+      "workflow_id": "SW-030",
+      "title": "Azure Analyze via signed URL — execution-data isolation boundary",
+      "purpose": "Mint a short-lived storage signed URL, hand it to Azure Document Intelligence, and return ONLY the Azure submit response. The signed URL never leaves this workflow and is never persisted anywhere.",
+      "roadmap": "Object Storage PR-3. Exists solely to satisfy a platform constraint; it holds no business logic.",
+      "why_a_separate_workflow": "Measured on n8n 2.29.9: a runtime-minted URL emitted in ANY node's output is written to the executions table (Probe G). saveDataSuccessExecution / saveDataErrorExecution are PER-WORKFLOW settings, so isolating the mint+submit in a child set to 'none' is the only supported way to keep the URL out of execution data while BOTH credentials stay in the n8n credential store. A Code node cannot do it instead: helpers.httpRequestWithAuthentication is explicitly unsupported there ('The function \"helpers.httpRequestWithAuthentication\" is not supported in the Code Node'), so a single-node mint+consume would force both secrets into $env.",
+      "isolation_contract": {
+        "settings": "saveDataSuccessExecution=none, saveDataErrorExecution=none, saveExecutionProgress=false. This workflow persists NOTHING.",
+        "returns": "Only { statusCode, headers } — the Azure submit response shape. Never the signed URL, never the storage response, never Azure request metadata containing the URL.",
+        "errors": "Every node that can see the URL swallows its own errors (onError + neverError). Failures are re-raised as REDACTED errors. A raw error would propagate into the PARENT's error record — measured: 1 occurrence when raw, 0 when redacted.",
+        "measured": "Isolation verified during the PR-3 investigation: success path 0 sentinel occurrences, redacted-failure path 0, raw-failure path 1 (the case this design forbids). Child execution records created: 0 in all runs."
+      },
+      "return_shape_rationale": "Returns the Azure fullResponse shape { statusCode, headers } deliberately, so SW-005's existing 'submit() — capture pollUrl' adapter consumes it UNCHANGED. The poll loop, retry budget, terminal-failure handling and HUMAN_REVIEW routing therefore all keep working exactly as before.",
+      "failure_routing": "An Azure response of ANY status is returned as data, preserving today's routing (non-202 -> terminal submit failure -> OCR failed -> HUMAN_REVIEW). Only a mint failure — a failure mode that does not exist today — raises a redacted workflow error.",
+      "credentials_on_import": "BIND BEFORE USE. 'Mint Signed URL' needs the Supabase storage credential (generic header auth, not yet created). 'Submit to Azure' uses the existing 'Azure Document Intelligence' credential, unchanged.",
+      "input": "{ storageKey, azureEndpoint, azureModel, signedUrlTtlSeconds, correlationId }. Bucket and storage endpoint come from $env (non-secret config, same split as SW-029). NO SECRET IS READ FROM $env.",
+      "license": "All Rights Reserved, Copyright (c) 2026 Dawod Manasra."
+    }
+  },
+  "nodes": [
+    {
+      "id": "trigger_execute",
+      "name": "When Called by SW-005",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 300],
+      "parameters": { "inputSource": "passthrough" },
+      "notes": "inputSource:'passthrough' (LOWERCASE t) per the frozen SW I/O contract. Receives JSON only — no binary crosses this boundary on the signed-URL path."
+    },
+    {
+      "id": "mint",
+      "name": "Mint Signed URL",
+      "credentials": { "httpHeaderAuth": { "id": "qc5C9NOR2HwCTifh", "name": "Supabase Storage (service_role)" } },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CRIE_STORAGE_ENDPOINT }}/storage/v1/object/sign/{{ $env.CRIE_STORAGE_BUCKET }}/{{ $json.storageKey }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ expiresIn: Number($json.signedUrlTtlSeconds) || 300 }) }}",
+        "options": { "response": { "response": { "fullResponse": true, "neverError": true } }, "timeout": 30000 }
+      },
+      "notes": "Mints a short-lived signed URL. onError + neverError so a storage failure becomes DATA rather than a raw error — a raw error here would carry the request URL into the parent's error record. The credential holds the secret; $env carries only non-secret endpoint/bucket."
+    },
+    {
+      "id": "build_urlsource",
+      "name": "Build urlSource",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// Composes the absolute signed URL for Azure. The URL exists ONLY inside this\n// workflow, which persists no execution data. Any failure is re-raised REDACTED:\n// a raw error would reach the parent's execution record (measured: 1 occurrence).\nconst inp = $('When Called by SW-005').first().json;\nconst res = $json || {};\nconst status = res.statusCode;\nconst body = res.body || {};\n\nif (status !== 200 || !body.signedURL) {\n  throw new Error('SW-030: signed-URL mint failed (HTTP ' + (status ?? 'n/a') +\n    ') for key ' + (inp.storageKey || '(missing)') + ' [url redacted]');\n}\n\nconst base = String($env.CRIE_STORAGE_ENDPOINT || '').replace(/\\/+$/, '');\nconst rel  = String(body.signedURL).replace(/^\\/+/, '');\nconst absolute = base + '/storage/v1/' + rel;\n\nreturn [{ json: {\n  urlSource: absolute,\n  azureEndpoint: inp.azureEndpoint,\n  azureModel: inp.azureModel,\n  correlationId: inp.correlationId || null\n} }];"
+      },
+      "notes": "The only place the absolute signed URL is constructed. Its output stays inside this workflow. On mint failure it raises a redacted error naming the storage KEY (not sensitive) and never the URL."
+    },
+    {
+      "id": "submit_azure",
+      "name": "Submit to Azure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 300],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.azureEndpoint }}/documentintelligence/documentModels/{{ $json.azureModel }}:analyze?api-version=2024-11-30",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ urlSource: $json.urlSource }) }}",
+        "options": { "response": { "response": { "fullResponse": true, "neverError": true } }, "timeout": 120000 }
+      },
+      "credentials": { "httpHeaderAuth": { "id": "7MWm3qjaEWwTputP", "name": "Azure Document Intelligence" } },
+      "notes": "Azure fetches the document itself from the signed URL — the bytes never enter n8n. Uses the EXISTING Azure credential, unchanged. onError + neverError so an Azure error becomes data: the request body contains the signed URL, so a raw error here would leak it."
+    },
+    {
+      "id": "return_submit",
+      "name": "Return Submit Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 300],
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "// ISOLATION BOUNDARY. Returns ONLY the Azure submit response shape that SW-005's\n// existing capture-pollUrl adapter already consumes: { statusCode, headers }.\n// Nothing else crosses back — not the URL, not the request body, not the storage\n// response, not Azure request metadata.\nconst res = $json || {};\nconst status = res.statusCode;\n\nif (status === undefined || status === null) {\n  // No response at all: re-raise REDACTED so nothing carrying the URL escapes.\n  throw new Error('SW-030: Azure submit produced no response [url redacted]');\n}\n\n// Any real Azure status (including non-202) is returned as DATA so SW-005 keeps\n// its existing routing: non-202 -> terminal submit failure -> OCR failed ->\n// HUMAN_REVIEW. Headers are copied verbatim; they carry operation-location and\n// retry-after, never the signed URL.\nreturn [{ json: { statusCode: status, headers: res.headers || {} } }];"
+      },
+      "notes": "The whitelist is deliberate: only statusCode and headers are returned. Anything added here must be re-checked against the isolation contract."
+    }
+  ],
+  "connections": {
+    "When Called by SW-005": { "main": [[{ "node": "Mint Signed URL", "type": "main", "index": 0 }]] },
+    "Mint Signed URL": { "main": [[{ "node": "Build urlSource", "type": "main", "index": 0 }]] },
+    "Build urlSource": { "main": [[{ "node": "Submit to Azure", "type": "main", "index": 0 }]] },
+    "Submit to Azure": { "main": [[{ "node": "Return Submit Response", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "none",
+    "saveExecutionProgress": false
+  },
+  "pinData": {}
+}

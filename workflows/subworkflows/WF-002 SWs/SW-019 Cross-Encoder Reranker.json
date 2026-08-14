@@ -1,0 +1,59 @@
+{
+  "id": "cG27mwjc4MjSHnto",
+  "name": "SW-019 Cross-Encoder Reranker",
+  "meta": {
+    "crie": {
+      "workflow_id": "SW-019",
+      "purpose": "Cross-encoder rerank (§259/§465). Gated off by canonical configuration (rerankerEnabled=false); fails loudly rather than pretending to rerank.",
+      "contract": "context_package.contract.json (WF-002 output, §294/§76)"
+    }
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "when-called-by-wf-002",
+      "name": "When Called by WF-002",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "notes": "inputSource 'passthrough' (lowercase t) per the frozen SW I/O contract."
+    },
+    {
+      "parameters": {
+        "jsChildProcess": false,
+        "jsCode": "\n// ===== SW-019 Cross-Encoder Reranker (§259/§465) =====\n// R-12/§305: rerank is GATED by rerankerEnabled and requires crossEncoderModel.\n// WF-002 only routes here when the gate is true, but the guard is repeated at the\n// point of use so the sub-workflow cannot silently no-op if called directly.\nconst inp = $('When Called by WF-002').first().json;\nconst cfg = inp.config || {};\nif (!cfg.rerankerEnabled) {\n  throw new Error('SW-019 called while rerankerEnabled=false. WF-002 must not route here ' +\n    'when the gate is off; a silent pass-through would misreport statistics.reranked.');\n}\nif (!cfg.crossEncoderModel) {\n  throw new Error('SW-019: rerankerEnabled=true but crossEncoderModel is empty (§465). ' +\n    'Set the model in configuration/retrieval.yaml before enabling rerank.');\n}\nthrow new Error('SW-019: no cross-encoder provider is configured in this deployment. ' +\n  'Rerank is disabled by canonical configuration (rerankerEnabled=false); enabling it ' +\n  'requires provisioning a cross-encoder first.');\n"
+      },
+      "id": "rerank-guard",
+      "name": "Rerank Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "When Called by WF-002": {
+      "main": [
+        [
+          {
+            "node": "Rerank Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveExecutionProgress": true
+  }
+}

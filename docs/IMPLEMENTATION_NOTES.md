@@ -26,6 +26,46 @@ These look like bugs but are deliberate. Changing them breaks the pipeline.
   so binary handling order matters. These constraints are already encoded in the
   workflows — preserve them.
 
+## Execution semantics — multi-parent nodes
+
+**A node with multiple incoming parents executes once per incoming branch, not once
+with the branches merged.** `$input.all()` returns only the items of the branch the
+current run belongs to.
+
+**Verified empirically on n8n 2.29.9** with an isolated probe (four Set branches —
+one of them two nodes deep — fanning into a single Code node under
+`executionOrder: "v1"`). The Code node executed **4 times**, `runIndex` 0–3, each run
+reporting `itemCount: 1` and exactly one source. Every upstream node executed once. No
+wave-grouping occurred: the deeper branch still produced its own separate run.
+
+**The invariant that follows:** *a node with multiple parents may depend only on the
+current branch's item.* Cross-branch aggregation requires an explicit aggregation
+mechanism (a Merge node); it cannot be achieved by fanning several branches into one
+Code node.
+
+**The correct authoring pattern** is already the shipped one. WF-001's `Emit FAILED`
+has six parents and reads **`$json` only** — each failure path normalizes its own
+payload upstream (`failStage`, `error`) and the shared terminal node merely emits it.
+Follow that shape: branch-local semantics in the shared node, normalization upstream.
+
+**Why this matters beyond wrong answers.** A rule that infers something from the
+*absence* of another branch's data is unsound by construction — it will fire on every
+run that is not that branch's run. This produced WF-005's false "Orphan sweep did not
+complete" alert on three of every four runs. Where the converging node performs a
+**write** rather than an evaluation, the same semantics cause duplicate writes instead:
+`WF-004`'s `SW-025 Google Sheets Writer` and `Assemble Proposal Package` are both fed by
+two parallel parents today and will need this treatment before WF-004 is built.
+
+Every other multi-parent node in the repository is safe, and for a second reason worth
+knowing: they are **alternative-path convergences**, not parallel fan-ins — mutually
+exclusive IF branches (`Emit FAILED`, `SW-020`), loop-backs (`poll() — wait`,
+`more batches?`, `Regenerate (retry)`), or exclusive triggers (`SW-016 Initialize`).
+Only one parent ever delivers, so no repeated run occurs regardless of input access.
+
+`ci/validate_workflows.py` reports a **warning** when a multi-parent node's code calls
+`$input.all()` — a warning rather than an error because loop-back and exclusive
+convergences make legitimate use of it.
+
 ## Workflow binding (the #1 deployment failure)
 
 Imports mint **new** workflow IDs, so a `mode:"list"` / cached-name binding can
@@ -38,6 +78,57 @@ input instead of the child's output (manifesting as a false HUMAN_REVIEW).
 - **Delete stale imported copies** and rename survivors with their version so the
   picker resolves exactly one record per name.
 - Step-by-step in [`WORKFLOW_INVENTORY.md`](WORKFLOW_INVENTORY.md).
+
+### Sub-workflows must be ACTIVE to be callable
+
+On n8n 2.29.9 an `executeWorkflow` call against an **inactive** child fails outright:
+
+```
+Workflow is not active and cannot be executed.
+```
+
+Verified A/B with an isolated probe pair (same parent, same child, nothing else changed):
+inactive → the above error; `n8n update:workflow --id=<id> --active=true` → succeeds.
+Every CRIE sub-workflow was inactive on the live instance, which alone would have stopped
+WF-001 end to end. Activation is therefore part of **deployment**, not an optional step,
+and it applies to SW-005/007/008/013/014/029/030.
+
+### Deploy by ID, never through the UI
+
+`n8n import:workflow --input=<file>` **preserves the `id` in the file** and updates that
+row in place, so redeploying is idempotent. An artifact with no `id` is rejected outright
+(`SQLITE_CONSTRAINT: NOT NULL constraint failed: workflow_entity.id`), leaving UI import
+as the only route — and UI import **mints a new id every time**. That is how the instance
+accumulated 8 copies of WF-001. CI guards both conditions.
+
+## Sub-workflow execution records under `saveDataSuccessExecution: none`
+
+**Correction to the PR-3 commit message.** It claimed "zero execution records created
+for the child". That is **not accurate** and should not be relied on. What is true — and
+what the security requirement actually needs — is narrower:
+
+> No signed URL and no node run-data are ever persisted. An execution **record** for the
+> child may exist, transiently.
+
+Measured on n8n 2.29.9 with an isolated twin pair (no Azure, no CRIE dependencies):
+
+- n8n creates the child's `execution_entity` row when the sub-workflow starts.
+- With `saveDataSuccessExecution: none` the run is **discarded rather than finalized**:
+  `deletedAt` is stamped immediately (a soft delete) and `status` is therefore left at
+  its last value — **`running`** — with `finished = 0` and `stoppedAt = NULL`.
+- The row survives an n8n restart in that state. It is **not** a stuck or crashed
+  execution and must not be "fixed" by force-failing or manually deleting it.
+- The periodic hard-delete sweep removes it (`pruneData: true`,
+  `pruneDataIntervals.hardDelete: 15` minutes). Observed: rows created at 23:50 and
+  00:02 were both gone by 00:16.
+- `runData` is **empty**, so nothing the child computed is stored. The row carries only
+  the child's *input*. For SW-030 that is `{ storageKey, azureEndpoint, azureModel,
+  signedUrlTtlSeconds, correlationId }` — no URL, no token, no storage host.
+
+So an operator inspecting the database mid-window will see a `running` SW-030 execution
+that never completes. That is expected. Verified on a real production run: the parent's
+persisted payload contained zero occurrences of `token=`, `object/sign`, `supabase.co`,
+`urlSource`, `signedURL`, `service_role` or `Bearer ey`.
 
 ## Sub-workflow I/O contract
 
@@ -94,6 +185,80 @@ input instead of the child's output (manifesting as a false HUMAN_REVIEW).
   persisted to Postgres) is designed and deferred to post-v1.0; it removes the
   need for the raised heap.
 
+### The deployed instance was missing the heap setting (found 2026-08-11)
+
+The running container had **no `NODE_OPTIONS` at all**, so Node used its default:
+measured `v8.getHeapStatistics().heap_size_limit` = **2240 MB**. The 216-page
+English SRS died mid-SW-008 with `FATAL ERROR: Ineffective mark-compacts near heap
+limit` at 2047 MB — `ExitCode=0`, `OOMKilled=false`, host memory 6.8 GB free, so it
+was V8's own ceiling, not the kernel or the cgroup.
+
+Note the baseline phrases this as a **worker** setting, but this deployment is a
+single n8n container in **regular mode** — there is no queue, no Redis and no worker
+service. The process that executes workflows is therefore the main n8n process, and
+that is where the setting belongs. After adding it to the `n8n` service the running
+process reports `heap_size_limit` = **6336 MB**. The task runner (a separate process
+that hosts Code nodes) does **not** inherit `NODE_OPTIONS`, so there is no risk of
+two processes each claiming 6 GB.
+
+Queue mode and `N8N_DEFAULT_BINARY_DATA_MODE=filesystem` remain deviations from the
+baseline. Neither is implicated in this failure: the crash was in SW-008, downstream
+of PR-4's storage boundary, where the item carries no binary.
+
+**Measured profile at SRS payload scale** (synthetic boilerplate: 7,668 paragraphs,
+~890 KB lean OCR — 95% of the real SRS's 931 KB — yielding 52 batches):
+peak RSS across *all* node processes **2,364 MB**, of which the executing process
+held **1,433 MB**, i.e. 23% of the 6336 MB ceiling. Under the old 2240 MB limit the
+same run would have sat at ~64%.
+
+That test isolates the *payload/loop-retention* driver. The *output* driver is
+separate and larger per unit: the Arabic manual (2,384 paragraphs, 18 batches) stored
+**123 MB** of execution data against the test's **72.4 MB**, despite one third the
+paragraphs — because it produced 1,803 units and 87k completion tokens versus the
+test's 436 and 15.6k. A real 216-page SRS combines both drivers, so its peak will
+exceed 1,433 MB; run it with heap monitoring rather than assuming the margin holds.
+
+### Object storage does not reduce peak memory — measure RSS, not cgroup usage
+
+Do not cite object storage as a memory optimisation, and do not benchmark it with
+`docker stats`.
+
+**A first attempt at this measurement was wrong and its numbers (1591 vs 2192 MiB)
+must not be reused.** It sampled `docker stats` MemUsage, which is the cgroup's usage
+**including page cache** — and n8n runs `binaryMode: "separate"`, so it writes the
+document to disk and the two arms dirty different amounts of cache. It also ran once per
+arm with no container restart between them, so the V8 high-water mark carried across.
+
+Corrected method: anonymous RSS summed across every container PID (Code nodes execute in
+the **task runner**, a separate process, so the main n8n process alone is not the
+figure), page cache recorded separately, container restarted before every run, arms
+alternated, byte-identical fixtures, three runs per arm. All six runs produced identical
+work: PROCESSED, 96 knowledge units, 96 chunks.
+
+| arm | runs (MiB) | median | min | max | range |
+|---|---|---|---|---|---|
+| PR-4, storage-backed | 2263, 2296, 2305 | 2296 | 2263 | 2305 | 42 |
+| pre-PR-4, binary path | 2363, 1844, 1938 | 1938 | 1844 | 2363 | **519** |
+
+The arms **overlap**: the binary path's highest run (2363) exceeds every storage-backed
+run. Its spread (519 MiB) is larger than the median gap (358 MiB), so no meaningful
+regression is established either way. Page cache peaked at only 72–111 MiB.
+
+Why no improvement is possible here: `binaryMode: "separate"` already keeps the original
+**off the heap**, and n8n *streams* it — `HttpRequestV3` calls
+`helpers.getBinaryStream(binaryData.id)` whenever the binary has an id, which is the case
+in filesystem mode, for both the Supabase upload and the legacy Azure submit. The only
+whole-file materialisations are `getBinaryDataBuffer` (needed for magic bytes and the
+digest) and, previously, the hash's padded copy — about 24 MiB total, ~1% of a 2.3 GiB
+peak and far inside run-to-run variance. Peak is dominated by OCR normalisation and
+SW-008's batch loop, which are identical either side of the cutover.
+
+The original acceptance criterion assumed removing `item.binary` from the main path would
+reduce heap. That premise is incompatible with `binaryMode: "separate"`. The criterion was
+amended by Architecture Owner ruling — see
+[`PR4_ACCEPTANCE_RECORD.md`](PR4_ACCEPTANCE_RECORD.md). Object storage's justification
+stands on durability, resumability, reference-passing and integrity, not heap use.
+
 ## Prompt registry
 
 - `SW-008` loads the current PR-001 with `ORDER BY version DESC LIMIT 1` → v1.2.
@@ -140,10 +305,11 @@ input instead of the child's output (manifesting as a false HUMAN_REVIEW).
     remediated set, and produces the identical audit trail as the scheduled path.
 - **BI layer:** point Metabase/Power BI/Grafana at the `admin.*` views.
 
-## Recommended CI guards (deferred)
+## CI guards
 
-- Ephemeral-Postgres **migration replay** — catches forward-reference defects
-  invisible to text tests.
-- `pgcheck.py` over all prompt/repair SQL (adjacent-literal + `{{` guard).
-- `validate_workflows.py` over workflow JSON (node-ref, trigger passthrough,
-  prompt-ref, IF-schema, 3VL-INSERT, taxonomy-enum checks).
+- **Shipped** — `validate_workflows.py` over the active workflow set (node-ref,
+  trigger passthrough, prompt-ref, IF-schema, executeWorkflow binding, Set-node
+  parameter/typeVersion). See [`ci/README.md`](../ci/README.md).
+- **Shipped** — ephemeral-Postgres **migration replay**; catches forward-reference
+  defects invisible to text tests.
+- **Deferred** — `pgcheck.py` over all prompt/repair SQL (adjacent-literal + `{{` guard).
