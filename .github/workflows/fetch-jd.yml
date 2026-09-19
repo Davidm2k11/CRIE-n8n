@@ -4,15 +4,19 @@ name: fetch-jd
 # runner (unrestricted egress) and commits the result under jd/<id>/ on the
 # branch it ran on. The Claude Code remote sandbox cannot reach linkedin.com.
 # ci.yml is untouched; the result commit carries [skip ci].
+#
+# To fetch a posting: write its numeric id to jd/REQUEST and commit through the
+# GitHub API or web UI (pushes from the sandbox's git proxy do not raise push
+# events), or run the workflow manually with the job_id input.
 on:
   workflow_dispatch:
     inputs:
       job_id:
         description: "Numeric LinkedIn job id (from /jobs/view/<id>/)"
         required: true
-        default: "4462066844"
   push:
     branches: [claude/linkedin-jd-extraction-da822a]
+    paths: [jd/REQUEST]
 
 permissions:
   contents: write
@@ -22,9 +26,18 @@ jobs:
     name: Fetch posting
     runs-on: ubuntu-latest
     env:
-      JOB_ID: ${{ github.event.inputs.job_id || '4462066844' }}
+      JOB_ID_INPUT: ${{ github.event.inputs.job_id }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve job id (workflow input, else jd/REQUEST)
+        run: |
+          id="${JOB_ID_INPUT:-$(tr -dc '0-9' < jd/REQUEST 2>/dev/null)}"
+          if [ -z "$id" ]; then
+            echo "No job id: pass the job_id input or put the numeric id in jd/REQUEST" >&2
+            exit 1
+          fi
+          echo "JOB_ID=$id" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
