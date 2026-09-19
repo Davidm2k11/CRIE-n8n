@@ -13,9 +13,6 @@ on:
         default: "4462066844"
   push:
     branches: [claude/linkedin-jd-extraction-da822a]
-    paths:
-      - ".github/workflows/fetch-jd.yml"
-      - ".github/scripts/fetch_jd.py"
 
 permissions:
   contents: write
