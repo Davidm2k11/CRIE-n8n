@@ -1,0 +1,102 @@
+# Solution Engineer META
+
+**Company:** Quantexa  
+**Location:** Dubai, Dubai, United Arab Emirates  
+**Posted:** 2 weeks ago  
+**Applicants:** 89 applicants  
+**Seniority level:** Not Applicable  
+**Employment type:** Full-time  
+**Job function:** Engineering and Information Technology  
+**Industries:** Software Development  
+
+Source: https://www.linkedin.com/jobs/view/4462066844/
+
+---
+
+What We Are All About
+
+Do you ever have the urge to do things better than the last time? We do. And it’s this urge that drives us every day. Our environment of discovery and innovation means we’re able to create deep and valuable relationships with our customers to create real change for them and their industries. It’s what got us here – and it’s what will make our future.
+
+At Quantexa, you will find autonomy and support in equal measures, with the freedom to grow a career that matches your ambitions. We are proud of our global culture: 41% of our colleagues come from an ethnic or religious minority background, we speak over 20 languages, and represent 50+ nationalities, creating a powerful sense of belonging across all teams.
+
+We're heading in one direction: the future. We’d love you to join us!
+
+The Opportunity
+
+We are looking for an exceptional candidate to join our high-performing team of Solution Engineers in META. You will collaborate closely with regional peers across Alliances, Sales, Marketing, and Product to help win strategic sales opportunities.
+
+We are seeking someone with strong technical and business solution expertise who can articulate complex technical concepts in a clear, compelling way. You will deliver impactful presentations, product demonstrations, and deep dives across customer engagements and industry events. As a spokesperson for Quantexa's technology, you’ll build lasting trust with stakeholders by engaging them in relevant, value-driven conversations.
+
+Responsibilities
+
+The Quantexa Solution Engineering team is the first touchpoint for prospective organisations, shaping the early stages of the customer journey and setting the direction for a successful engagement. In this role, key responsibilities include:
+
+- Communicate the value and impact of the Quantexa Decision Intelligence Platform, helping prospects understand how it enables smarter, faster, and more confident decision-making through connected, trusted data
+- Identify and position the right Quantexa solution tailored to each prospect’s specific needs
+- Guide prospects through a clear, outcome-driven solution strategy that sets the stage for long-term value and success
+
+Location
+
+This role is based in Dubai and may require travel to customer sites and other countries where appropriate.
+
+What You’ll Be Doing
+
+- Be a functional expert in Quantexa’s platform and products, with a strong understanding of its capabilities and real-world applications
+- Demonstrate a good understanding of Banking and Financial Services Industry (FSI) practices and regulatory environments, and how the platform addresses gaps or risks
+- Articulate and present the value of our platform, demonstrating how Quantexa solves specific pain points and enables better decision-making
+- Represent Quantexa at industry events, customer meetings, and webinars, showcasing our capabilities and thought leadership
+- Manage the technical aspects of the sales cycle, working alongside Sales, Architects, Product, and SMEs
+- Contribute to winning proposals, including RFPs and RFIs
+- Take ownership of the design and execution of PoCs and trials, ensuring alignment with customer objectives
+- Collaborate on the design and iteration of tailored solutions, working with partners, customers, and internal teams to define the right approach
+- Design, adapt and deliver customised] product demonstrations, both in-person and remotely, that engage a range of stakeholders from users to executives
+- Expertly guide and shape] discovery sessions with prospects and partners, uncovering core business challenges and technical needs
+
+What You’ll Bring
+
+- Experience in a commercially focused, technical role such as Solution Engineering, Presales, Technical Sales, or Value Consulting
+- Excellent interpersonal, written, and verbal communication skills, with a track record of effective customer engagement
+- Exceptional communicator, able to captivate audiences of all sizes with an innate ability to simplify complex concepts for diverse audiences.
+- Proven experience across at least two solution areas [e.g. Financial Crime, Data Management, Customer 360], with deep expertise in at least one of them, focused on either technical or business capabilities
+- Strong technology knowledge, particularly in enterprise software environments
+- Successfully led a minimum of five extensive proving engagements. Proving engagements include PoCs or early implementation phases, or alternatively, all of the following activities: technical workshops, prototypes, bespoke demonstrations, and business cases.
+- Confident in presenting and pitching solutions to senior stakeholders at Tier 1 organisations
+- Proven ability to drive innovation and best practices that elevate Solution Engineering performance, with multiple examples of successful implementation
+- Experience building demos, templates, or sharing best practices that contribute to team enablement
+- Experience mentoring or supporting peers through knowledge sharing or guidance
+
+Desired Skills
+
+- Deep expertise in data-driven, analytical solutions such as Entity Resolution, Graph Generation, Advanced Analytics, and MDM
+- Domain knowledge in areas such as Anti-Financial Crime, AML, KYC
+- Technical knowledge in data storage, processing and containerisation technology such as Cloud or On-prem Distributed File Systems, Spark, Databricks, Kubernetes, Open Search, Elastic Search.
+
+Our perks and quirks.
+
+What makes you Q will help you to realize your full potential, flourish and enjoy what you do, while being recognized and rewarded with our broad range of benefits.
+
+We Offer
+
+- Competitive salary & Company bonus
+- 22 days annual leave, plus national holidays + your birthday off!
+- Private Healthcare, including dental & optic cover
+- Regularly bench-marked salary rates
+- Well-being days
+- Volunteer Day off
+- Work from Home Equipment
+- Free Subscription to a meditation, relaxation and sleep app
+- Continuous Training and Development
+- Spend up to 2 months working outside of your country of employment over a rolling 12-month period with our ‘Work from Anywhere’ policy
+- Team Social Budget & Company-wide Socials
+
+Our mission.
+
+We have one mission. To help businesses grow. To make data easier. And to make the world a better place. We’re not a start-up. Not anymore. But we’ve not been around that long either. What we are is a collection of bright, passionate minds harnessing complexities and helping our clients and their communities. One culture, made of many. Heading in one direction – the future.
+
+It’s All About You.
+
+We want you to feel welcome, valued, and respected - because it’s your individuality and passion that make you Q. We see that, and we celebrate it. That’s why we’re proud to be an Equal Opportunity Employer.
+
+We are committed to fostering an inclusive and diverse work environment, continuously improving to ensure everyone belongs. Our recruitment process is designed to be inclusive and accessible. If you need any reasonable adjustments or accommodations, please let our Talent Acquisition Team know - we’re happy to assist.
+
+No matter your race, beliefs, color, national origin, gender, sexual orientation, age, marital status, neurodiversity, or abilities—whoever you are—if you're a passionate, curious, and caring human eager to push the boundaries of what’s possible, we want to hear from you.
