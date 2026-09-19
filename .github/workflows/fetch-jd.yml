@@ -1,0 +1,54 @@
+name: fetch-jd
+
+# Utility, not CI: fetches a public LinkedIn job posting from a GitHub-hosted
+# runner (unrestricted egress) and commits the result under jd/<id>/ on the
+# branch it ran on. The Claude Code remote sandbox cannot reach linkedin.com.
+# ci.yml is untouched; the result commit carries [skip ci].
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Numeric LinkedIn job id (from /jobs/view/<id>/)"
+        required: true
+        default: "4462066844"
+  push:
+    branches: [claude/linkedin-jd-extraction-da822a]
+    paths:
+      - ".github/workflows/fetch-jd.yml"
+      - ".github/scripts/fetch_jd.py"
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    name: Fetch posting
+    runs-on: ubuntu-latest
+    env:
+      JOB_ID: ${{ github.event.inputs.job_id || '4462066844' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch and parse posting
+        run: python3 .github/scripts/fetch_jd.py "$JOB_ID"
+
+      - name: Upload result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jd-${{ env.JOB_ID }}
+          path: jd/${{ env.JOB_ID }}
+          if-no-files-found: warn
+
+      - name: Commit result to branch
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add jd
+          if git diff --cached --quiet; then echo "nothing to commit"; exit 0; fi
+          git commit -m "chore(jd): fetched LinkedIn posting $JOB_ID [skip ci]"
+          git push
