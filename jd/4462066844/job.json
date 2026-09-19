@@ -2,19 +2,19 @@
   "job_id": "4462066844",
   "url": "https://www.linkedin.com/jobs/view/4462066844/",
   "source": "guest_api",
-  "fetched_at": "2026-09-19T22:24:42Z",
+  "fetched_at": "2026-09-19T22:27:24Z",
   "sources": {
     "guest_api": {
       "url": "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/4462066844",
       "status": 200,
       "final_url": "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/4462066844",
-      "bytes": 45163
+      "bytes": 34221
     },
     "view_page": {
       "url": "https://www.linkedin.com/jobs/view/4462066844/",
       "status": 200,
       "final_url": "https://www.linkedin.com/jobs/view/4462066844/",
-      "bytes": 243206
+      "bytes": 264424
     },
     "jina_view": {
       "url": "https://r.jina.ai/https://www.linkedin.com/jobs/view/4462066844/",
