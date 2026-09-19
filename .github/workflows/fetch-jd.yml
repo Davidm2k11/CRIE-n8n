@@ -5,8 +5,9 @@ name: fetch-jd
 # branch it ran on. The Claude Code remote sandbox cannot reach linkedin.com.
 # ci.yml is untouched; the result commit carries [skip ci].
 #
-# To fetch a posting: put its numeric id on the first line of jd/REQUEST and
-# push; or run the workflow manually with the job_id input.
+# To fetch a posting: .github/scripts/jd.sh <url or id>  (does the whole round
+# trip), or put the id on the first line of jd/REQUEST and push, or run the
+# workflow manually with the job_id input.
 on:
   workflow_dispatch:
     inputs:
@@ -37,20 +38,8 @@ jobs:
             exit 1
           fi
           echo "JOB_ID=$id" >> "$GITHUB_ENV"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - name: Fetch and parse posting
         run: python3 .github/scripts/fetch_jd.py "$JOB_ID"
-
-      - name: Upload result artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: jd-${{ env.JOB_ID }}
-          path: jd/${{ env.JOB_ID }}
-          if-no-files-found: warn
 
       - name: Commit result to branch
         if: always()
