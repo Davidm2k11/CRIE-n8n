@@ -2,19 +2,19 @@
   "job_id": "4462066844",
   "url": "https://www.linkedin.com/jobs/view/4462066844/",
   "source": "guest_api",
-  "fetched_at": "2026-09-19T22:27:24Z",
+  "fetched_at": "2026-09-19T22:32:56Z",
   "sources": {
     "guest_api": {
       "url": "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/4462066844",
       "status": 200,
       "final_url": "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/4462066844",
-      "bytes": 34221
+      "bytes": 67969
     },
     "view_page": {
       "url": "https://www.linkedin.com/jobs/view/4462066844/",
       "status": 200,
       "final_url": "https://www.linkedin.com/jobs/view/4462066844/",
-      "bytes": 264424
+      "bytes": 298024
     },
     "jina_view": {
       "url": "https://r.jina.ai/https://www.linkedin.com/jobs/view/4462066844/",
@@ -26,7 +26,7 @@
       "url": "https://r.jina.ai/https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/4462066844",
       "status": 403,
       "final_url": "https://r.jina.ai/https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/4462066844",
-      "bytes": 5939
+      "bytes": 5960
     }
   },
   "job": {
