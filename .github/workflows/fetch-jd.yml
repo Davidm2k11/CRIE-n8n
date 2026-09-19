@@ -5,9 +5,8 @@ name: fetch-jd
 # branch it ran on. The Claude Code remote sandbox cannot reach linkedin.com.
 # ci.yml is untouched; the result commit carries [skip ci].
 #
-# To fetch a posting: write its numeric id to jd/REQUEST and commit through the
-# GitHub API or web UI (pushes from the sandbox's git proxy do not raise push
-# events), or run the workflow manually with the job_id input.
+# To fetch a posting: put its numeric id on the first line of jd/REQUEST and
+# push; or run the workflow manually with the job_id input.
 on:
   workflow_dispatch:
     inputs:
@@ -32,7 +31,7 @@ jobs:
 
       - name: Resolve job id (workflow input, else jd/REQUEST)
         run: |
-          id="${JOB_ID_INPUT:-$(tr -dc '0-9' < jd/REQUEST 2>/dev/null)}"
+          id="${JOB_ID_INPUT:-$(head -n1 jd/REQUEST 2>/dev/null | tr -dc '0-9')}"
           if [ -z "$id" ]; then
             echo "No job id: pass the job_id input or put the numeric id in jd/REQUEST" >&2
             exit 1
